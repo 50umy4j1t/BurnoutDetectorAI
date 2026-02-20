@@ -1,0 +1,11 @@
+numpy
+opencv-python
+tensorflow
+deepface
+pillow
+tf-keras
+ollama
+textual
+rich
+requests
+streamlit
