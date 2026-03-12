@@ -18,10 +18,9 @@ from collections import deque
 import threading
 import time
 import ollama
-import requests
-import base64
-import tempfile
-import subprocess
+import sounddevice as sd
+from kokoro_onnx import Kokoro
+from huggingface_hub import hf_hub_download
 
 AVAILABLE_MODELS = {
     "1": ("qwen3:4b", "Qwen3 4B (Best quality, slower)"),
@@ -30,8 +29,7 @@ AVAILABLE_MODELS = {
 }
 OLLAMA_MODEL = "qwen3:4b"  # default, overridden by user selection
 AUTO_REPORT_INTERVAL = 45 * 60  # 45 minutes in seconds
-SARVAM_API_KEY = os.environ.get("SARVAM_KEY", "")
-SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech"
+TTS_PIPELINE = None  # initialized lazily
 
 
 # ============================================================
@@ -181,45 +179,17 @@ def send_to_ollama(report):
 
 
 def speak_text(text):
-    """Convert text to speech using Sarvam AI and play it."""
-    if not SARVAM_API_KEY:
-        console.print("  [yellow]SARVAM_API_KEY not set, skipping TTS[/]")
-        return
-    # Sarvam has a 2500 char limit for bulbul:v3
-    text = text[:2500]
+    """Convert text to speech using Kokoro TTS (fully offline)."""
+    global TTS_PIPELINE
     try:
-        resp = requests.post(
-            SARVAM_TTS_URL,
-            headers={
-                "api-subscription-key": SARVAM_API_KEY,
-                "content-type": "application/json",
-            },
-            json={
-                "text": text,
-                "target_language_code": "en-IN",
-                "speaker": "priya",
-                "pace": 1.1,
-                "speech_sample_rate": 22050,
-                "enable_preprocessing": True,
-                "model": "bulbul:v3",
-            },
-            timeout=30,
-        )
-        resp.raise_for_status()
-        audio_b64 = resp.json()["audios"][0]
-        audio_bytes = base64.b64decode(audio_b64)
-
-        # Save to temp file and play
-        tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
-        tmp.write(audio_bytes)
-        tmp.close()
-
-        # Play audio on Windows
-        subprocess.Popen(
-            ["powershell", "-c", f'(New-Object Media.SoundPlayer "{tmp.name}").PlaySync()'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
-        ).wait()
-        os.unlink(tmp.name)
+        if TTS_PIPELINE is None:
+            console.print("  [dim]Loading Kokoro TTS model...[/]")
+            model_path = hf_hub_download("hexgrad/Kokoro-82M-v1.1-ONNX", "kokoro-v1.1.onnx")
+            voices_path = hf_hub_download("hexgrad/Kokoro-82M-v1.1-ONNX", "voices-v1.1.bin")
+            TTS_PIPELINE = Kokoro(model_path, voices_path)
+        samples, sr = TTS_PIPELINE.create(text, voice="af_heart", speed=1.1)
+        sd.play(samples, samplerate=sr)
+        sd.wait()
     except Exception as e:
         console.print(f"  [red]TTS error: {e}[/]")
 

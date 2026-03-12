@@ -9,7 +9,7 @@ A real-time webcam-based system that monitors facial emotions to predict academi
 - **Real-time Emotion Detection** — Uses DeepFace with OpenCV to analyze facial expressions (happy, sad, angry, fear, surprise, disgust, neutral)
 - **Burnout Risk Scoring** — Calculates a burnout score based on negative emotion patterns over time
 - **AI Wellness Advisor** — Sends session reports to a local Ollama model (Qwen3) for supportive, personalized feedback
-- **Text-to-Speech** — Reads AI responses aloud using Sarvam AI TTS
+- **Text-to-Speech** — Reads AI responses aloud using Kokoro TTS (fully offline)
 - **Privacy Mode** — Gaussian blur applied to the live feed by default; no raw frames are ever saved
 - **Bias Detection** — Monitors confidence variance to flag potential model bias or poor lighting
 - **Auto Reports** — Automatically generates a wellness report every 45 minutes
@@ -25,7 +25,7 @@ A real-time webcam-based system that monitors facial emotions to predict academi
 
 1. Install dependencies:
    ```bash
-   pip install opencv-python numpy deepface rich ollama requests tensorflow
+   pip install opencv-python numpy deepface rich ollama kokoro-onnx sounddevice tensorflow
    ```
 
 2. Pull an Ollama model:
@@ -36,12 +36,7 @@ A real-time webcam-based system that monitors facial emotions to predict academi
    ollama pull qwen3:0.6b
    ```
 
-3. (Optional) Set your Sarvam API key for TTS:
-   ```bash
-   export SARVAM_KEY="your-api-key"
-   ```
-
-4. Run:
+3. Run:
    ```bash
    python main.py
    ```

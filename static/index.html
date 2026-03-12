@@ -1,0 +1,682 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ethical AI Surveillance - Burnout Predictor</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            background: #0e1117;
+            color: #e0e0e0;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* ---- Top Bar ---- */
+        .topbar {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            padding: 10px 20px;
+            background: #161b22;
+            border-bottom: 1px solid #30363d;
+            flex-shrink: 0;
+        }
+        .topbar h1 {
+            font-size: 16px;
+            color: #00c8ff;
+            white-space: nowrap;
+        }
+        .topbar .subtitle {
+            font-size: 12px;
+            color: #8b949e;
+        }
+        .controls {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-left: auto;
+        }
+        select, button {
+            padding: 6px 14px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #e0e0e0;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        button:hover { background: #30363d; }
+        button.primary {
+            background: #238636;
+            border-color: #238636;
+            color: white;
+        }
+        button.primary:hover { background: #2ea043; }
+        button.danger {
+            background: #da3633;
+            border-color: #da3633;
+            color: white;
+        }
+        button.danger:hover { background: #f85149; }
+        .toggle-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+        .toggle-group input[type="checkbox"] {
+            accent-color: #238636;
+            width: 16px;
+            height: 16px;
+        }
+
+        /* ---- Main Grid ---- */
+        .main {
+            display: grid;
+            grid-template-columns: 1fr 360px;
+            grid-template-rows: 1fr 200px;
+            flex: 1;
+            overflow: hidden;
+        }
+
+        /* ---- Video Panel ---- */
+        .video-panel {
+            background: #0d1117;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        .video-panel img {
+            max-width: 100%;
+            max-height: 100%;
+            object-fit: contain;
+        }
+        .video-placeholder {
+            color: #484f58;
+            text-align: center;
+        }
+        .video-placeholder p { margin-top: 8px; font-size: 14px; }
+
+        /* ---- Emotions Panel ---- */
+        .emotions-panel {
+            background: #161b22;
+            border-left: 1px solid #30363d;
+            padding: 16px;
+            overflow-y: auto;
+        }
+        .emotions-panel h2 {
+            font-size: 14px;
+            color: #00c8ff;
+            margin-bottom: 12px;
+        }
+        .emotion-bar-group { margin-bottom: 16px; }
+        .emotion-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 6px;
+            font-size: 12px;
+        }
+        .emotion-label {
+            width: 70px;
+            text-transform: capitalize;
+        }
+        .emotion-track {
+            flex: 1;
+            height: 12px;
+            background: #21262d;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-right: 8px;
+        }
+        .emotion-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s ease;
+        }
+        .emotion-value { width: 40px; text-align: right; }
+
+        .burnout-section { margin-bottom: 16px; }
+        .burnout-section h3 { font-size: 13px; margin-bottom: 6px; }
+        .burnout-track {
+            height: 20px;
+            background: #21262d;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+        .burnout-fill {
+            height: 100%;
+            border-radius: 4px;
+            transition: width 0.3s ease;
+        }
+        .burnout-text {
+            position: absolute;
+            top: 2px;
+            left: 8px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #8b949e;
+            margin-bottom: 4px;
+        }
+
+        /* ---- Heart Rate Panel ---- */
+        .heartrate-panel {
+            background: #161b22;
+            border-top: 1px solid #30363d;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .heartrate-panel h2 {
+            font-size: 14px;
+            color: #f97583;
+            margin-bottom: 8px;
+        }
+        .hr-placeholder {
+            text-align: center;
+            color: #484f58;
+            font-size: 13px;
+        }
+        .hr-bpm {
+            font-size: 36px;
+            font-weight: 700;
+            color: #30363d;
+            margin: 8px 0;
+        }
+        .flatline {
+            width: 80%;
+            max-width: 300px;
+            height: 40px;
+        }
+        .flatline line {
+            stroke: #30363d;
+            stroke-width: 2;
+            stroke-dasharray: 8 4;
+            animation: dash 1s linear infinite;
+        }
+        @keyframes dash {
+            to { stroke-dashoffset: -12; }
+        }
+
+        /* ---- Chat Panel ---- */
+        .chat-panel {
+            background: #0d1117;
+            border-left: 1px solid #30363d;
+            border-top: 1px solid #30363d;
+            display: flex;
+            flex-direction: column;
+        }
+        .chat-header {
+            padding: 10px 16px;
+            border-bottom: 1px solid #30363d;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+        .chat-header h2 { font-size: 14px; color: #00c8ff; }
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px 16px;
+        }
+        .chat-msg {
+            margin-bottom: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .chat-msg.user {
+            background: #21262d;
+            padding: 8px 12px;
+            border-radius: 8px 8px 8px 0;
+        }
+        .chat-msg.assistant {
+            background: #0d2137;
+            border-left: 3px solid #00c8ff;
+            padding: 8px 12px;
+            border-radius: 0 8px 8px 8px;
+        }
+        .chat-msg.report {
+            background: #1c1c1c;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-family: monospace;
+            font-size: 11px;
+            white-space: pre-wrap;
+            color: #8b949e;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        .chat-msg .thinking {
+            font-size: 11px;
+            color: #6e7681;
+            font-style: italic;
+            margin-bottom: 6px;
+        }
+        .chat-input-area {
+            display: flex;
+            gap: 8px;
+            padding: 10px 16px;
+            border-top: 1px solid #30363d;
+            flex-shrink: 0;
+        }
+        .chat-input-area input {
+            flex: 1;
+            padding: 8px 12px;
+            border-radius: 6px;
+            border: 1px solid #30363d;
+            background: #21262d;
+            color: #e0e0e0;
+            font-size: 13px;
+            outline: none;
+        }
+        .chat-input-area input:focus { border-color: #00c8ff; }
+
+        .tts-status {
+            font-size: 11px;
+            color: #6e7681;
+            padding: 4px 16px;
+            flex-shrink: 0;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 14px;
+            height: 14px;
+            border: 2px solid #30363d;
+            border-top-color: #00c8ff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            vertical-align: middle;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<!-- ===== TOP BAR ===== -->
+<div class="topbar">
+    <div>
+        <h1>Ethical AI Surveillance System</h1>
+        <div class="subtitle">Smart Academic Burnout Predictor &mdash; Team: Project Protocol</div>
+    </div>
+    <div class="controls">
+        <select id="modelSelect"></select>
+        <button id="startBtn" class="primary">Start Session</button>
+        <button id="stopBtn" class="danger" disabled>Stop Session</button>
+        <div class="toggle-group">
+            <input type="checkbox" id="privacyToggle" checked>
+            <label for="privacyToggle">Privacy</label>
+        </div>
+        <div class="toggle-group">
+            <input type="checkbox" id="muteToggle">
+            <label for="muteToggle">Mute TTS</label>
+        </div>
+    </div>
+</div>
+
+<!-- ===== MAIN GRID ===== -->
+<div class="main">
+
+    <!-- Video -->
+    <div class="video-panel" id="videoPanel">
+        <div class="video-placeholder" id="videoPlaceholder">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="1.5">
+                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
+            </svg>
+            <p>Click "Start Session" to begin</p>
+        </div>
+        <img id="videoFeed" style="display:none" alt="Live Feed">
+    </div>
+
+    <!-- Emotions sidebar -->
+    <div class="emotions-panel">
+        <h2>Live Emotion Data</h2>
+
+        <div class="emotion-bar-group" id="emotionBars">
+            <div class="stat-row"><span>Waiting for data...</span></div>
+        </div>
+
+        <div class="burnout-section">
+            <h3>Burnout Risk</h3>
+            <div class="burnout-track">
+                <div class="burnout-fill" id="burnoutFill" style="width:0%;background:#0c0"></div>
+                <span class="burnout-text" id="burnoutText">0%</span>
+            </div>
+        </div>
+
+        <div style="margin-bottom:16px">
+            <h3 style="font-size:13px;margin-bottom:4px">Bias Check</h3>
+            <div class="stat-row"><span id="biasText">Collecting data...</span></div>
+        </div>
+
+        <div>
+            <div class="stat-row"><span>Samples</span><span id="samplesText">0</span></div>
+            <div class="stat-row"><span>Session</span><span id="elapsedText">00:00</span></div>
+            <div class="stat-row"><span>Model</span><span id="modelText">-</span></div>
+        </div>
+    </div>
+
+    <!-- Heart Rate placeholder -->
+    <div class="heartrate-panel">
+        <h2>Heart Rate Monitor</h2>
+        <div class="hr-bpm">-- BPM</div>
+        <svg class="flatline" viewBox="0 0 200 40">
+            <line x1="0" y1="20" x2="200" y2="20"/>
+        </svg>
+        <div class="hr-placeholder">Awaiting sensor integration</div>
+    </div>
+
+    <!-- Chat -->
+    <div class="chat-panel">
+        <div class="chat-header">
+            <h2>AI Wellness Advisor</h2>
+            <button id="supportBtn" style="margin-left:auto;font-size:12px;padding:4px 10px" class="primary">
+                Report + AI Support
+            </button>
+        </div>
+        <div class="chat-messages" id="chatMessages">
+            <div class="chat-msg assistant">
+                Hi! I'm your AI wellness advisor. Start a session and click
+                "Report + AI Support" to get a burnout assessment, or just chat with me below.
+            </div>
+        </div>
+        <div class="tts-status" id="ttsStatus">TTS: Loading model on first use...</div>
+        <div class="chat-input-area">
+            <input type="text" id="chatInput" placeholder="Chat with your wellness advisor..." disabled>
+            <button id="chatSendBtn" disabled>Send</button>
+        </div>
+    </div>
+</div>
+
+<script type="module">
+    // ============================================================
+    // KokoroJS TTS (browser-side, fully offline)
+    // ============================================================
+    let tts = null;
+    let ttsLoading = false;
+    const ttsStatus = document.getElementById('ttsStatus');
+
+    async function initTTS() {
+        if (tts || ttsLoading) return;
+        ttsLoading = true;
+        ttsStatus.textContent = 'TTS: Downloading model (~86MB)...';
+        try {
+            const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
+            tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-ONNX', { dtype: 'q8' });
+            ttsStatus.textContent = 'TTS: Ready (Kokoro, offline)';
+        } catch (e) {
+            console.error('TTS init error:', e);
+            ttsStatus.textContent = 'TTS: Failed to load - ' + e.message;
+        }
+        ttsLoading = false;
+    }
+
+    async function speak(text) {
+        if (document.getElementById('muteToggle').checked) return;
+        if (!tts) await initTTS();
+        if (!tts) return;
+        try {
+            ttsStatus.textContent = 'TTS: Generating speech...';
+            const result = await tts.generate(text, { voice: 'af_heart' });
+            ttsStatus.textContent = 'TTS: Playing...';
+            // result may be an AudioBuffer, a blob, or have a toBlob method
+            if (typeof result.play === 'function') {
+                await result.play();
+            } else {
+                // Convert to playable audio via blob
+                const blob = (typeof result.toBlob === 'function')
+                    ? await result.toBlob()
+                    : new Blob([result.audio || result], { type: 'audio/wav' });
+                const url = URL.createObjectURL(blob);
+                const el = new Audio(url);
+                await el.play();
+                el.onended = () => URL.revokeObjectURL(url);
+            }
+            ttsStatus.textContent = 'TTS: Ready (Kokoro, offline)';
+        } catch (e) {
+            console.error('TTS error:', e);
+            ttsStatus.textContent = 'TTS: Error - ' + e.message;
+        }
+    }
+
+    // ============================================================
+    // DOM refs
+    // ============================================================
+    const modelSelect = document.getElementById('modelSelect');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const privacyToggle = document.getElementById('privacyToggle');
+    const videoFeed = document.getElementById('videoFeed');
+    const videoPlaceholder = document.getElementById('videoPlaceholder');
+    const emotionBars = document.getElementById('emotionBars');
+    const burnoutFill = document.getElementById('burnoutFill');
+    const burnoutText = document.getElementById('burnoutText');
+    const biasText = document.getElementById('biasText');
+    const samplesText = document.getElementById('samplesText');
+    const elapsedText = document.getElementById('elapsedText');
+    const modelText = document.getElementById('modelText');
+    const chatMessages = document.getElementById('chatMessages');
+    const chatInput = document.getElementById('chatInput');
+    const chatSendBtn = document.getElementById('chatSendBtn');
+    const supportBtn = document.getElementById('supportBtn');
+
+    let ws = null;
+
+    // ============================================================
+    // Load models
+    // ============================================================
+    async function loadModels() {
+        const res = await fetch('/api/models');
+        const data = await res.json();
+        modelSelect.innerHTML = '';
+        data.models.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m.id;
+            opt.textContent = m.name;
+            if (m.id === data.current) opt.selected = true;
+            modelSelect.appendChild(opt);
+        });
+    }
+    loadModels();
+
+    // ============================================================
+    // Emotion colors
+    // ============================================================
+    const EMOTION_COLORS = {
+        happy: '#00c800', sad: '#c86400', angry: '#dc0000',
+        surprise: '#00dcdc', fear: '#b400b4',
+        disgust: '#008c8c', neutral: '#b4b4b4',
+    };
+
+    // ============================================================
+    // WebSocket for live data
+    // ============================================================
+    function connectWS() {
+        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+        ws = new WebSocket(`${proto}://${location.host}/ws/emotions`);
+        ws.onmessage = (e) => {
+            const d = JSON.parse(e.data);
+            updateEmotions(d.emotions);
+            updateBurnout(d.burnout);
+            biasText.textContent = d.bias;
+            samplesText.textContent = d.samples;
+            const m = Math.floor(d.elapsed / 60);
+            const s = d.elapsed % 60;
+            elapsedText.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+            modelText.textContent = d.model;
+        };
+        ws.onclose = () => { ws = null; };
+    }
+
+    function disconnectWS() {
+        if (ws) { ws.close(); ws = null; }
+    }
+
+    function updateEmotions(emotions) {
+        if (!emotions || Object.keys(emotions).length === 0) return;
+        const sorted = Object.entries(emotions).sort((a, b) => b[1] - a[1]);
+        emotionBars.innerHTML = sorted.map(([em, val]) => `
+            <div class="emotion-row">
+                <span class="emotion-label">${em}</span>
+                <div class="emotion-track">
+                    <div class="emotion-fill" style="width:${(val*100).toFixed(0)}%;background:${EMOTION_COLORS[em]||'#888'}"></div>
+                </div>
+                <span class="emotion-value">${(val*100).toFixed(0)}%</span>
+            </div>
+        `).join('');
+    }
+
+    function updateBurnout(score) {
+        let color = '#0c0', level = 'LOW';
+        if (score >= 75) { color = '#f00'; level = 'CRITICAL'; }
+        else if (score >= 50) { color = '#f80'; level = 'HIGH'; }
+        else if (score >= 25) { color = '#fc0'; level = 'MODERATE'; }
+        burnoutFill.style.width = score.toFixed(0) + '%';
+        burnoutFill.style.background = color;
+        burnoutText.textContent = `${score.toFixed(0)}% - ${level}`;
+    }
+
+    // ============================================================
+    // Session controls
+    // ============================================================
+    startBtn.onclick = async () => {
+        startBtn.disabled = true;
+        const res = await fetch('/api/session/start', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ model: modelSelect.value }),
+        });
+        const data = await res.json();
+        if (res.ok) {
+            videoPlaceholder.style.display = 'none';
+            videoFeed.src = '/api/video_feed';
+            videoFeed.style.display = 'block';
+            stopBtn.disabled = false;
+            chatInput.disabled = false;
+            chatSendBtn.disabled = false;
+            modelSelect.disabled = true;
+            connectWS();
+            initTTS(); // preload TTS model in background
+        } else {
+            alert(data.error || 'Failed to start session');
+            startBtn.disabled = false;
+        }
+    };
+
+    stopBtn.onclick = async () => {
+        stopBtn.disabled = true;
+        disconnectWS();
+        const res = await fetch('/api/session/stop', { method: 'POST' });
+        const data = await res.json();
+        videoFeed.style.display = 'none';
+        videoFeed.src = '';
+        videoPlaceholder.style.display = '';
+        startBtn.disabled = false;
+        modelSelect.disabled = false;
+        chatInput.disabled = true;
+        chatSendBtn.disabled = true;
+        if (data.report) {
+            addMessage('report', data.report);
+        }
+    };
+
+    privacyToggle.onchange = () => {
+        fetch('/api/settings', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ privacy_mode: privacyToggle.checked }),
+        });
+    };
+
+    // ============================================================
+    // Chat
+    // ============================================================
+    function addMessage(type, content, thinking) {
+        const div = document.createElement('div');
+        div.className = `chat-msg ${type}`;
+        if (type === 'report') {
+            div.textContent = content;
+        } else {
+            let html = '';
+            if (thinking) {
+                const short = thinking.length > 200 ? thinking.slice(0, 200) + '...' : thinking;
+                html += `<div class="thinking">Thinking: ${escapeHtml(short)}</div>`;
+            }
+            html += escapeHtml(content);
+            div.innerHTML = html;
+        }
+        chatMessages.appendChild(div);
+        chatMessages.scrollTop = chatMessages.scrollHeight;
+    }
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    supportBtn.onclick = async () => {
+        supportBtn.disabled = true;
+        supportBtn.innerHTML = '<span class="spinner"></span> Thinking...';
+        try {
+            const res = await fetch('/api/support', { method: 'POST' });
+            const data = await res.json();
+            if (res.ok) {
+                addMessage('report', data.report);
+                addMessage('assistant', data.response, data.thinking);
+                speak(data.response);
+            } else {
+                addMessage('assistant', data.error || 'Error generating support');
+            }
+        } catch (e) {
+            addMessage('assistant', 'Network error: ' + e.message);
+        }
+        supportBtn.disabled = false;
+        supportBtn.textContent = 'Report + AI Support';
+    };
+
+    async function sendChat() {
+        const msg = chatInput.value.trim();
+        if (!msg) return;
+        chatInput.value = '';
+        addMessage('user', msg);
+        chatSendBtn.disabled = true;
+        chatInput.disabled = true;
+        try {
+            const res = await fetch('/api/chat', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ message: msg }),
+            });
+            const data = await res.json();
+            addMessage('assistant', data.response, data.thinking);
+            speak(data.response);
+        } catch (e) {
+            addMessage('assistant', 'Network error: ' + e.message);
+        }
+        chatSendBtn.disabled = false;
+        chatInput.disabled = false;
+        chatInput.focus();
+    }
+
+    chatSendBtn.onclick = sendChat;
+    chatInput.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
+</script>
+</body>
+</html>
