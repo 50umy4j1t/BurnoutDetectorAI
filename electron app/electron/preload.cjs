@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('stressLensApi', {
   stopMonitoring: () => ipcRenderer.invoke('session:stopMain'),
   captureHeartRate: () => ipcRenderer.invoke('heart:capture'),
   setTtsEnabled: (enabled) => ipcRenderer.invoke('tts:setEnabled', { enabled }),
+  speakText: (text, reason) => ipcRenderer.invoke('tts:speak', { text, reason }),
   sendChat: (message, includeLatestReport, modelChoice) => ipcRenderer.invoke('chat:send', {
     message,
     includeLatestReport,

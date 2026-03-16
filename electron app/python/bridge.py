@@ -498,6 +498,7 @@ def capture_heart_metrics() -> dict[str, Any]:
         raise RuntimeError("pyserial is not available in the Python environment")
 
     emit_log("heart", f"Listening on {HEART_SENSOR_PORT} @ {HEART_SENSOR_BAUD} baud")
+    emit_log("heart", "Place your finger on the sensor and hold still")
 
     try:
         with serial.Serial(
@@ -740,14 +741,19 @@ def chat_with_ollama(message: str, include_latest_report: bool, model_choice: st
     if reasoning_text is None and isinstance(message_block, dict):
         reasoning_text = message_block.get("thinking")
 
-    tts_queued = queue_tts(reply_text or "", f"chat reply from {model_name}")
-
     return {
         "response": reply_text or "",
         "thinking": reasoning_text,
         "model": model_name,
         "includedReport": latest_report["fileName"] if latest_report else None,
-        "ttsQueued": tts_queued,
+        "tts": current_tts_payload(),
+    }
+
+
+def speak_text_payload(text: str, reason: str | None) -> dict[str, Any]:
+    queued = queue_tts(text, reason or "chat reply")
+    return {
+        "queued": queued,
         "tts": current_tts_payload(),
     }
 
@@ -792,6 +798,8 @@ def handle_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
         return {"metrics": capture_heart_metrics()}
     if method == "set_tts_enabled":
         return set_tts_enabled(params.get("enabled"))
+    if method == "speak_text":
+        return speak_text_payload(params.get("text"), params.get("reason"))
     if method == "chat":
         return chat_with_ollama(
             params.get("message"),

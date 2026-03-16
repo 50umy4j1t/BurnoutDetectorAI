@@ -235,6 +235,7 @@ ipcMain.handle('session:startMain', async (_event, payload) => callBridge('launc
 ipcMain.handle('session:stopMain', async () => callBridge('terminate_main'));
 ipcMain.handle('heart:capture', async () => callBridge('capture_heart_rate'));
 ipcMain.handle('tts:setEnabled', async (_event, payload) => callBridge('set_tts_enabled', payload));
+ipcMain.handle('tts:speak', async (_event, payload) => callBridge('speak_text', payload));
 ipcMain.handle('chat:send', async (_event, payload) => callBridge('chat', payload));
 ipcMain.handle('reports:list', async () => callBridge('list_reports'));
 ipcMain.handle('reports:read', async (_event, payload) => callBridge('read_report', payload));

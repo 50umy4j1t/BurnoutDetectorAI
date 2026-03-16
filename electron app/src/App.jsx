@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 const EMOTION_COLORS = {
   happy: '#22c55e',
@@ -170,6 +170,77 @@ function createChatEntry(role, content, extras = {}) {
   };
 }
 
+function createRuntimeEntry(key, label, content, extras = {}) {
+  return {
+    id: `${key}-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    key,
+    label,
+    content,
+    pending: false,
+    tone: 'info',
+    timeoutMs: 4000,
+    ...extras,
+  };
+}
+
+function buildRuntimeEntryFromLog(source, message) {
+  const text = String(message || '').trim();
+  if (!text) {
+    return null;
+  }
+
+  const lower = text.toLowerCase();
+  const isError = source.includes('stderr') || /traceback|exception|error|failed/.test(lower);
+
+  if (source === 'bridge' && lower.includes('bridge ready using')) {
+    return null;
+  }
+
+  if (source === 'heart') {
+    const heartPending = /listening on|place your finger|hold still/.test(lower);
+    const tone = /captured/.test(lower) ? 'success' : isError || /timeout/.test(lower) ? 'error' : heartPending ? 'pending' : 'info';
+    const content = lower.includes('listening on') ? 'Place your finger on the sensor and hold still...' : text;
+    return createRuntimeEntry('heart-sensor', 'Heart Sensor', content, {
+      pending: heartPending,
+      tone,
+      timeoutMs: heartPending ? 120000 : tone === 'error' ? 8000 : 3500,
+    });
+  }
+
+  if (source === 'tts') {
+    return null;
+  }
+
+  if (source === 'main' || source === 'main:stdout' || source === 'main:stderr') {
+    const interesting =
+      isError ||
+      /loading emotion detection model|webcam ready|using model:|controls:|heart sensor:|place finger|hold still|report saved to|sending to ai advisor|loading kokoro tts model|preparing kokoro voice bundle/.test(lower);
+
+    if (!interesting) {
+      return null;
+    }
+
+    const content = text.replace(/^heart sensor:\s*/i, '');
+    const pending = /loading|sending|place finger|hold still|preparing/.test(lower);
+    const tone = isError ? 'error' : /saved|ready|using model/.test(lower) ? 'success' : pending ? 'pending' : 'info';
+
+    return createRuntimeEntry(isError ? 'monitor-error' : 'monitor-runtime', 'Monitor', content, {
+      pending,
+      tone,
+      timeoutMs: pending ? 20000 : tone === 'error' ? 8000 : 3500,
+    });
+  }
+
+  if (isError) {
+    return createRuntimeEntry(`runtime-error-${source}`, 'Runtime', text, {
+      tone: 'error',
+      timeoutMs: 8000,
+    });
+  }
+
+  return null;
+}
+
 function appendHeartReading(current, metrics) {
   if (!metrics || metrics.bpm == null) {
     return current;
@@ -261,6 +332,7 @@ function HeartChart({ values }) {
 
 export default function App() {
   const api = window.stressLensApi;
+  const runtimeTimersRef = useRef(new Map());
   const [clock, setClock] = useState(() => new Date().toLocaleTimeString());
   const [loading, setLoading] = useState(true);
   const [models, setModels] = useState([]);
@@ -284,6 +356,7 @@ export default function App() {
   const [includeLatestReport, setIncludeLatestReport] = useState(true);
   const [chatBusy, setChatBusy] = useState(false);
   const [heartBusy, setHeartBusy] = useState(false);
+  const [runtimeStatuses, setRuntimeStatuses] = useState([]);
   const [lastLog, setLastLog] = useState('Waiting for bridge activity.');
 
   const reportSummary = parseReport(activeReportContent);
@@ -295,8 +368,57 @@ export default function App() {
   const tone = statusTone(reportSummary.status);
   const visibleReports = reports.slice(0, 10);
 
-  function appendSystemMessage(message) {
-    setChatMessages((current) => [...current.slice(-18), createChatEntry('system', message)]);
+  function clearRuntimeTimer(key) {
+    const timerId = runtimeTimersRef.current.get(key);
+    if (timerId) {
+      window.clearTimeout(timerId);
+      runtimeTimersRef.current.delete(key);
+    }
+  }
+
+  function removeRuntimeStatus(key) {
+    clearRuntimeTimer(key);
+    setRuntimeStatuses((current) => current.filter((entry) => entry.key !== key));
+  }
+
+  function upsertRuntimeStatus(entry) {
+    clearRuntimeTimer(entry.key);
+    setRuntimeStatuses((current) => {
+      const next = [...current.filter((item) => item.key !== entry.key), entry];
+      return next.slice(-6);
+    });
+
+    const timeoutMs = entry.timeoutMs ?? (entry.pending ? 20000 : entry.tone === 'error' ? 8000 : 4000);
+    const timerId = window.setTimeout(() => {
+      removeRuntimeStatus(entry.key);
+    }, timeoutMs);
+    runtimeTimersRef.current.set(entry.key, timerId);
+  }
+
+  function appendSystemMessage(message, tone = 'info') {
+    upsertRuntimeStatus(
+      createRuntimeEntry(`runtime-${Date.now()}-${Math.random().toString(16).slice(2)}`, 'Runtime', message, {
+        tone,
+        timeoutMs: tone === 'error' ? 8000 : 4000,
+      })
+    );
+  }
+
+  function queueSpeechAfterRender(text, reason) {
+    if (!api || !text.trim()) {
+      return;
+    }
+
+    window.setTimeout(async () => {
+      try {
+        const payload = await api.speakText(text, reason);
+        if (payload?.tts) {
+          setTtsInfo(payload.tts);
+        }
+      } catch (error) {
+        appendSystemMessage(`Python TTS failed: ${error.message}`, 'error');
+      }
+    }, 400);
   }
 
   async function openReport(fileName) {
@@ -345,6 +467,15 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    return () => {
+      for (const timerId of runtimeTimersRef.current.values()) {
+        window.clearTimeout(timerId);
+      }
+      runtimeTimersRef.current.clear();
+    };
+  }, []);
+
+  useEffect(() => {
     let disposed = false;
 
     async function hydrate() {
@@ -389,10 +520,23 @@ export default function App() {
           setModelChoice(payload.data.modelChoice);
         }
         if (payload.data?.running) {
-          appendSystemMessage(`Camera monitor launched with ${payload.data.modelName}.`);
+          upsertRuntimeStatus(
+            createRuntimeEntry('monitor-status', 'Monitor', `Camera monitor launched with ${payload.data.modelName}.`, {
+              tone: 'success',
+              timeoutMs: 4000,
+            })
+          );
         } else {
-          appendSystemMessage(
-            `Camera monitor stopped${payload.data?.exitCode !== undefined ? ` (exit ${payload.data.exitCode})` : ''}.`
+          upsertRuntimeStatus(
+            createRuntimeEntry(
+              'monitor-status',
+              'Monitor',
+              `Camera monitor stopped${payload.data?.exitCode !== undefined ? ` (exit ${payload.data.exitCode})` : ''}.`,
+              {
+                tone: 'info',
+                timeoutMs: 5000,
+              }
+            )
           );
         }
       }
@@ -400,6 +544,12 @@ export default function App() {
       if (payload.event === 'heart-rate') {
         setHeartMetrics(payload.data);
         setHeartHistory((current) => appendHeartReading(current, payload.data));
+        upsertRuntimeStatus(
+          createRuntimeEntry('heart-sensor', 'Heart Sensor', `Reading captured: ${payload.data.bpm} BPM / ${payload.data.spo2}%`, {
+            tone: 'success',
+            timeoutMs: 4500,
+          })
+        );
       }
 
       if (payload.event === 'report-updated') {
@@ -407,16 +557,46 @@ export default function App() {
         if (payload.data?.fileName && payload.data?.content) {
           setActiveReportName(payload.data.fileName);
           setActiveReportContent(payload.data.content);
-          appendSystemMessage(`${payload.data.kind || 'updated'} ${payload.data.fileName}.`);
+          upsertRuntimeStatus(
+            createRuntimeEntry('report-status', 'Reports', `${payload.data.kind || 'updated'} ${payload.data.fileName}.`, {
+              tone: 'success',
+              timeoutMs: 4500,
+            })
+          );
         }
       }
 
       if (payload.event === 'tts-status') {
         setTtsInfo(payload.data || DEFAULT_TTS);
+        if (payload.data?.message) {
+          upsertRuntimeStatus(
+            createRuntimeEntry('python-tts', 'Python TTS', payload.data.message, {
+              pending: payload.data.state === 'loading' || payload.data.state === 'speaking',
+              tone:
+                payload.data.state === 'error' || payload.data.state === 'unavailable'
+                  ? 'error'
+                  : payload.data.state === 'loading' || payload.data.state === 'speaking'
+                    ? 'pending'
+                    : payload.data.state === 'muted'
+                      ? 'info'
+                      : 'success',
+              timeoutMs:
+                payload.data.state === 'loading' || payload.data.state === 'speaking'
+                  ? 20000
+                  : payload.data.state === 'error' || payload.data.state === 'unavailable'
+                    ? 8000
+                    : 4000,
+            })
+          );
+        }
       }
 
       if (payload.event === 'log' && payload.data?.message) {
         setLastLog(`${payload.data.source || 'log'}: ${payload.data.message}`);
+        const runtimeEntry = buildRuntimeEntryFromLog(payload.data.source || 'log', payload.data.message);
+        if (runtimeEntry) {
+          upsertRuntimeStatus(runtimeEntry);
+        }
       }
     });
 
@@ -473,7 +653,8 @@ export default function App() {
         setHeartHistory((current) => appendHeartReading(current, payload.metrics));
       }
     } catch (error) {
-      appendSystemMessage(`Heart capture failed: ${error.message}`);
+      removeRuntimeStatus('heart-sensor');
+      appendSystemMessage(`Heart capture failed: ${error.message}`, 'error');
     } finally {
       setHeartBusy(false);
     }
@@ -530,14 +711,22 @@ export default function App() {
       return;
     }
 
-    setChatMessages((current) => [...current.slice(-18), createChatEntry('user', trimmed)]);
+    setChatMessages((current) => [...current, createChatEntry('user', trimmed)]);
     setChatInput('');
     setChatBusy(true);
+    upsertRuntimeStatus(
+      createRuntimeEntry('chat-thinking', 'StressLens AI', 'Generating reply...', {
+        pending: true,
+        tone: 'pending',
+        timeoutMs: 30000,
+      })
+    );
 
     try {
       const payload = await api.sendChat(trimmed, includeLatestReport, modelChoice);
+      removeRuntimeStatus('chat-thinking');
       setChatMessages((current) => [
-        ...current.slice(-18),
+        ...current,
         createChatEntry('assistant', payload.response || 'No reply returned.', {
           thinking: payload.thinking,
           meta: payload.includedReport ? `${payload.model} with ${payload.includedReport}` : payload.model,
@@ -547,11 +736,13 @@ export default function App() {
       if (payload.tts) {
         setTtsInfo(payload.tts);
       }
+
+      if (payload.response && payload.tts?.enabled) {
+        queueSpeechAfterRender(payload.response, `chat reply from ${payload.model || 'selected model'}`);
+      }
     } catch (error) {
-      setChatMessages((current) => [
-        ...current.slice(-18),
-        createChatEntry('system', `Chat failed: ${error.message}`),
-      ]);
+      removeRuntimeStatus('chat-thinking');
+      appendSystemMessage(`Chat failed: ${error.message}`, 'error');
     } finally {
       setChatBusy(false);
     }
@@ -763,6 +954,16 @@ export default function App() {
           </div>
 
           <div className="chat-messages">
+            {runtimeStatuses.map((status) => (
+              <article key={status.id} className={`chat-msg msg-runtime runtime-${status.tone}`}>
+                <div className="runtime-head">
+                  {status.pending ? <span className="runtime-spinner" /> : <span className={`runtime-dot runtime-dot-${status.tone}`} />}
+                  <span className="runtime-source">{status.label}</span>
+                </div>
+                <div className="runtime-text">{status.content}</div>
+              </article>
+            ))}
+
             {reportSummary.advice ? (
               <article className="chat-msg msg-ai latest-advice">
                 <div className="msg-sender">Latest Advice</div>
