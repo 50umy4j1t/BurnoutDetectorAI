@@ -9,3 +9,7 @@ textual
 rich
 requests
 streamlit
+pyserial
+sounddevice
+huggingface-hub
+kokoro-onnx

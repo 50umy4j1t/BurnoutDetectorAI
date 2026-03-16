@@ -1,682 +1,696 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ethical AI Surveillance - Burnout Predictor</title>
-    <style>
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-            background: #0e1117;
-            color: #e0e0e0;
-            height: 100vh;
-            display: flex;
-            flex-direction: column;
-            overflow: hidden;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>StressLens AI — Dashboard</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg-primary: #0a0e1a;
+    --bg-secondary: #111827;
+    --bg-card: #1a2035;
+    --accent-teal: #14b8a6;
+    --accent-teal-dim: #0d9488;
+    --accent-red: #ef4444;
+    --accent-amber: #f59e0b;
+    --accent-green: #22c55e;
+    --accent-blue: #3b82f6;
+    --accent-purple: #a855f7;
+    --text-primary: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --text-muted: #475569;
+    --border: #1e293b;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Outfit', sans-serif;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    height: 100vh; overflow: hidden;
+  }
 
-        /* ---- Top Bar ---- */
-        .topbar {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-            padding: 10px 20px;
-            background: #161b22;
-            border-bottom: 1px solid #30363d;
-            flex-shrink: 0;
-        }
-        .topbar h1 {
-            font-size: 16px;
-            color: #00c8ff;
-            white-space: nowrap;
-        }
-        .topbar .subtitle {
-            font-size: 12px;
-            color: #8b949e;
-        }
-        .controls {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            margin-left: auto;
-        }
-        select, button {
-            padding: 6px 14px;
-            border-radius: 6px;
-            border: 1px solid #30363d;
-            background: #21262d;
-            color: #e0e0e0;
-            font-size: 13px;
-            cursor: pointer;
-        }
-        button:hover { background: #30363d; }
-        button.primary {
-            background: #238636;
-            border-color: #238636;
-            color: white;
-        }
-        button.primary:hover { background: #2ea043; }
-        button.danger {
-            background: #da3633;
-            border-color: #da3633;
-            color: white;
-        }
-        button.danger:hover { background: #f85149; }
-        .toggle-group {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-        }
-        .toggle-group input[type="checkbox"] {
-            accent-color: #238636;
-            width: 16px;
-            height: 16px;
-        }
+  /* ── Topbar ── */
+  .topbar {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 24px; height: 52px;
+    background: var(--bg-secondary); border-bottom: 1px solid var(--border);
+  }
+  .topbar-brand { display: flex; align-items: center; gap: 10px; }
+  .topbar-brand .logo {
+    width: 28px; height: 28px;
+    background: linear-gradient(135deg, var(--accent-teal), var(--accent-blue));
+    border-radius: 8px; display: flex; align-items: center; justify-content: center;
+    font-weight: 800; font-size: 14px; color: #fff;
+  }
+  .topbar-brand h1 { font-size: 16px; font-weight: 700; }
+  .topbar-brand h1 span { color: var(--accent-teal); }
+  .topbar-controls { display: flex; align-items: center; gap: 10px; }
+  .topbar-controls select, .topbar-btn {
+    background: var(--bg-card); border: 1px solid var(--border);
+    color: var(--text-primary); border-radius: 6px;
+    padding: 5px 12px; font-size: 11px; font-family: 'Outfit', sans-serif;
+    cursor: pointer; outline: none; transition: all 0.2s;
+  }
+  .topbar-btn:hover { background: rgba(20,184,166,0.15); border-color: var(--accent-teal); }
+  .topbar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+  .topbar-btn.start { border-color: rgba(20,184,166,0.3); color: var(--accent-teal); }
+  .topbar-btn.stop { border-color: rgba(239,68,68,0.3); color: var(--accent-red); }
+  .status-pill {
+    display: flex; align-items: center; gap: 6px;
+    font-size: 11px; color: var(--text-secondary);
+  }
+  .status-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .status-dot.on { background: var(--accent-green); animation: pulse 2s infinite; }
+  .status-dot.off { background: var(--text-muted); }
+  @keyframes pulse {
+    0%,100% { box-shadow: 0 0 0 0 rgba(34,197,94,0.4); }
+    50% { box-shadow: 0 0 0 6px rgba(34,197,94,0); }
+  }
+  #clock { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--text-muted); }
 
-        /* ---- Main Grid ---- */
-        .main {
-            display: grid;
-            grid-template-columns: 1fr 360px;
-            grid-template-rows: 1fr 200px;
-            flex: 1;
-            overflow: hidden;
-        }
+  /* ── Main grid ── */
+  .main {
+    display: grid; grid-template-columns: 1fr 340px;
+    height: calc(100vh - 52px);
+  }
+  .dashboard {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    grid-template-rows: auto auto 1fr auto;
+    gap: 12px; padding: 12px; overflow-y: auto;
+  }
 
-        /* ---- Video Panel ---- */
-        .video-panel {
-            background: #0d1117;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            position: relative;
-            overflow: hidden;
-        }
-        .video-panel img {
-            max-width: 100%;
-            max-height: 100%;
-            object-fit: contain;
-        }
-        .video-placeholder {
-            color: #484f58;
-            text-align: center;
-        }
-        .video-placeholder p { margin-top: 8px; font-size: 14px; }
+  /* ── Cards ── */
+  .card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 16px;
+    transition: border-color 0.3s;
+  }
+  .card:hover { border-color: rgba(20,184,166,0.25); }
+  .card-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 12px;
+  }
+  .card-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 1.2px; color: var(--text-secondary);
+  }
+  .card-badge {
+    font-size: 10px; font-weight: 600; padding: 2px 8px; border-radius: 10px;
+    background: rgba(20,184,166,0.1); color: var(--accent-teal);
+  }
 
-        /* ---- Emotions Panel ---- */
-        .emotions-panel {
-            background: #161b22;
-            border-left: 1px solid #30363d;
-            padding: 16px;
-            overflow-y: auto;
-        }
-        .emotions-panel h2 {
-            font-size: 14px;
-            color: #00c8ff;
-            margin-bottom: 12px;
-        }
-        .emotion-bar-group { margin-bottom: 16px; }
-        .emotion-row {
-            display: flex;
-            align-items: center;
-            margin-bottom: 6px;
-            font-size: 12px;
-        }
-        .emotion-label {
-            width: 70px;
-            text-transform: capitalize;
-        }
-        .emotion-track {
-            flex: 1;
-            height: 12px;
-            background: #21262d;
-            border-radius: 3px;
-            overflow: hidden;
-            margin-right: 8px;
-        }
-        .emotion-fill {
-            height: 100%;
-            border-radius: 3px;
-            transition: width 0.3s ease;
-        }
-        .emotion-value { width: 40px; text-align: right; }
+  /* ── Burnout Gauge ── */
+  .gauge-ring {
+    width: 170px; height: 170px; margin: 0 auto; border-radius: 50%;
+    background: conic-gradient(var(--accent-green) 0deg, var(--accent-amber) 120deg, var(--accent-red) 240deg, var(--accent-red) 270deg, var(--bg-card) 270deg);
+    display: flex; align-items: center; justify-content: center;
+  }
+  .gauge-inner {
+    width: 130px; height: 130px; border-radius: 50%; background: var(--bg-card);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .gauge-value {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 36px; font-weight: 700; line-height: 1;
+  }
+  .gauge-label { font-size: 11px; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: 1px; }
+  .gauge-status {
+    text-align: center; margin-top: 12px;
+    font-size: 13px; font-weight: 700; letter-spacing: 1px; text-transform: uppercase;
+  }
 
-        .burnout-section { margin-bottom: 16px; }
-        .burnout-section h3 { font-size: 13px; margin-bottom: 6px; }
-        .burnout-track {
-            height: 20px;
-            background: #21262d;
-            border-radius: 4px;
-            overflow: hidden;
-            position: relative;
-        }
-        .burnout-fill {
-            height: 100%;
-            border-radius: 4px;
-            transition: width 0.3s ease;
-        }
-        .burnout-text {
-            position: absolute;
-            top: 2px;
-            left: 8px;
-            font-size: 12px;
-            font-weight: 600;
-        }
+  /* ── Emotion bars ── */
+  .emotion-row { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+  .emotion-label { width: 65px; font-size: 11px; color: var(--text-secondary); text-transform: capitalize; }
+  .emotion-bar-bg { flex: 1; height: 8px; background: rgba(255,255,255,0.05); border-radius: 4px; overflow: hidden; }
+  .emotion-bar-fill { height: 100%; border-radius: 4px; transition: width 0.5s ease; }
+  .emotion-pct {
+    width: 32px; text-align: right;
+    font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--text-secondary);
+  }
 
-        .stat-row {
-            display: flex;
-            justify-content: space-between;
-            font-size: 12px;
-            color: #8b949e;
-            margin-bottom: 4px;
-        }
+  /* ── Metric cards ── */
+  .metrics-row { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(4,1fr); gap: 12px; }
+  .metric-card {
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px 16px; transition: all 0.3s;
+  }
+  .metric-card:hover { border-color: rgba(20,184,166,0.3); transform: translateY(-1px); }
+  .metric-icon { font-size: 18px; margin-bottom: 8px; }
+  .metric-value { font-family: 'JetBrains Mono', monospace; font-size: 24px; font-weight: 700; line-height: 1; }
+  .metric-name { font-size: 11px; color: var(--text-secondary); margin-top: 4px; text-transform: uppercase; letter-spacing: 0.8px; }
+  .metric-trend { font-size: 10px; margin-top: 6px; font-weight: 600; }
 
-        /* ---- Heart Rate Panel ---- */
-        .heartrate-panel {
-            background: #161b22;
-            border-top: 1px solid #30363d;
-            padding: 16px;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-        }
-        .heartrate-panel h2 {
-            font-size: 14px;
-            color: #f97583;
-            margin-bottom: 8px;
-        }
-        .hr-placeholder {
-            text-align: center;
-            color: #484f58;
-            font-size: 13px;
-        }
-        .hr-bpm {
-            font-size: 36px;
-            font-weight: 700;
-            color: #30363d;
-            margin: 8px 0;
-        }
-        .flatline {
-            width: 80%;
-            max-width: 300px;
-            height: 40px;
-        }
-        .flatline line {
-            stroke: #30363d;
-            stroke-width: 2;
-            stroke-dasharray: 8 4;
-            animation: dash 1s linear infinite;
-        }
-        @keyframes dash {
-            to { stroke-dashoffset: -12; }
-        }
+  /* ── Report card ── */
+  .report-card { grid-column: 1 / -1; }
+  .report-content {
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    white-space: pre-wrap; color: var(--text-secondary);
+    max-height: 200px; overflow-y: auto; line-height: 1.5;
+    background: rgba(0,0,0,0.2); border-radius: 8px; padding: 12px;
+  }
 
-        /* ---- Chat Panel ---- */
-        .chat-panel {
-            background: #0d1117;
-            border-left: 1px solid #30363d;
-            border-top: 1px solid #30363d;
-            display: flex;
-            flex-direction: column;
-        }
-        .chat-header {
-            padding: 10px 16px;
-            border-bottom: 1px solid #30363d;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            flex-shrink: 0;
-        }
-        .chat-header h2 { font-size: 14px; color: #00c8ff; }
-        .chat-messages {
-            flex: 1;
-            overflow-y: auto;
-            padding: 12px 16px;
-        }
-        .chat-msg {
-            margin-bottom: 12px;
-            font-size: 13px;
-            line-height: 1.5;
-        }
-        .chat-msg.user {
-            background: #21262d;
-            padding: 8px 12px;
-            border-radius: 8px 8px 8px 0;
-        }
-        .chat-msg.assistant {
-            background: #0d2137;
-            border-left: 3px solid #00c8ff;
-            padding: 8px 12px;
-            border-radius: 0 8px 8px 8px;
-        }
-        .chat-msg.report {
-            background: #1c1c1c;
-            padding: 8px 12px;
-            border-radius: 6px;
-            font-family: monospace;
-            font-size: 11px;
-            white-space: pre-wrap;
-            color: #8b949e;
-            max-height: 150px;
-            overflow-y: auto;
-        }
-        .chat-msg .thinking {
-            font-size: 11px;
-            color: #6e7681;
-            font-style: italic;
-            margin-bottom: 6px;
-        }
-        .chat-input-area {
-            display: flex;
-            gap: 8px;
-            padding: 10px 16px;
-            border-top: 1px solid #30363d;
-            flex-shrink: 0;
-        }
-        .chat-input-area input {
-            flex: 1;
-            padding: 8px 12px;
-            border-radius: 6px;
-            border: 1px solid #30363d;
-            background: #21262d;
-            color: #e0e0e0;
-            font-size: 13px;
-            outline: none;
-        }
-        .chat-input-area input:focus { border-color: #00c8ff; }
+  /* ── Keyboard legend ── */
+  .key-legend {
+    grid-column: 1 / -1;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 12px; padding: 10px 16px; font-size: 11px; color: var(--text-secondary);
+  }
+  .key-legend kbd {
+    background: var(--bg-primary); border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 6px; font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; color: var(--accent-teal); font-weight: 600;
+  }
 
-        .tts-status {
-            font-size: 11px;
-            color: #6e7681;
-            padding: 4px 16px;
-            flex-shrink: 0;
-        }
+  /* ── HR Chart ── */
+  .hr-chart-area { width: 100%; height: 70px; margin-top: 8px; }
+  .hr-chart-area canvas { width: 100%; height: 100%; }
 
-        .spinner {
-            display: inline-block;
-            width: 14px;
-            height: 14px;
-            border: 2px solid #30363d;
-            border-top-color: #00c8ff;
-            border-radius: 50%;
-            animation: spin 0.6s linear infinite;
-            vertical-align: middle;
-        }
-        @keyframes spin { to { transform: rotate(360deg); } }
-    </style>
+  /* ── Sidebar ── */
+  .sidebar {
+    background: var(--bg-secondary); border-left: 1px solid var(--border);
+    display: flex; flex-direction: column; height: calc(100vh - 52px);
+  }
+  .sidebar-header { padding: 16px; border-bottom: 1px solid var(--border); }
+  .sidebar-header h2 {
+    font-size: 14px; font-weight: 700;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .sidebar-header .ai-dot {
+    width: 8px; height: 8px; border-radius: 50%;
+    background: var(--accent-purple); display: inline-block;
+    animation: pulse 2s infinite;
+  }
+  .sidebar-header p { font-size: 11px; color: var(--text-muted); margin-top: 4px; }
+  .chat-messages {
+    flex: 1; overflow-y: auto; padding: 12px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .chat-msg {
+    padding: 10px 12px; border-radius: 10px;
+    font-size: 12.5px; line-height: 1.5;
+    animation: msg-in 0.4s ease;
+  }
+  @keyframes msg-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .msg-ai { background: var(--bg-card); border: 1px solid var(--border); }
+  .msg-ai .msg-sender {
+    font-size: 10px; font-weight: 700; color: var(--accent-purple);
+    text-transform: uppercase; letter-spacing: 0.8px; margin-bottom: 4px;
+  }
+  .msg-user {
+    background: rgba(59,130,246,0.1); border: 1px solid rgba(59,130,246,0.2);
+    align-self: flex-end;
+  }
+  .msg-system {
+    background: rgba(20,184,166,0.08); border: 1px solid rgba(20,184,166,0.15);
+    color: var(--accent-teal); font-size: 11px; text-align: center;
+  }
+  .msg-report {
+    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    white-space: pre-wrap; color: var(--text-muted);
+    max-height: 150px; overflow-y: auto;
+  }
+  .msg-thinking { font-size: 11px; color: var(--text-muted); font-style: italic; margin-bottom: 6px; }
+  .tts-bar {
+    font-size: 10px; color: var(--text-muted);
+    padding: 4px 12px; border-top: 1px solid var(--border);
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .mute-toggle {
+    font-size: 10px; color: var(--text-muted); cursor: pointer;
+    background: none; border: 1px solid var(--border);
+    border-radius: 4px; padding: 2px 8px; font-family: 'Outfit', sans-serif;
+  }
+  .mute-toggle:hover { border-color: var(--accent-teal); color: var(--accent-teal); }
+  .chat-input {
+    padding: 12px; border-top: 1px solid var(--border);
+    display: flex; gap: 8px;
+  }
+  .chat-input input {
+    flex: 1; background: var(--bg-card); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; color: var(--text-primary);
+    font-family: 'Outfit', sans-serif; font-size: 12px; outline: none;
+    transition: border-color 0.3s;
+  }
+  .chat-input input:focus { border-color: var(--accent-teal); }
+  .chat-input input::placeholder { color: var(--text-muted); }
+  .chat-input button {
+    background: var(--accent-teal); color: #fff; border: none;
+    border-radius: 8px; padding: 8px 14px; font-weight: 600;
+    font-size: 12px; cursor: pointer; font-family: 'Outfit', sans-serif;
+    transition: all 0.2s;
+  }
+  .chat-input button:hover { background: var(--accent-teal-dim); }
+  .chat-input button:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+
+  body::after {
+    content: ''; position: fixed; inset: 0;
+    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none; z-index: 9999; opacity: 0.4;
+  }
+</style>
 </head>
 <body>
 
-<!-- ===== TOP BAR ===== -->
+<!-- Topbar -->
 <div class="topbar">
-    <div>
-        <h1>Ethical AI Surveillance System</h1>
-        <div class="subtitle">Smart Academic Burnout Predictor &mdash; Team: Project Protocol</div>
+  <div class="topbar-brand">
+    <div class="logo">S</div>
+    <h1>Stress<span>Lens</span> AI</h1>
+  </div>
+  <div class="topbar-controls">
+    <select id="modelSelect"></select>
+    <button class="topbar-btn start" id="startBtn">Start Session</button>
+    <button class="topbar-btn stop" id="stopBtn" disabled>Stop Session</button>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px">
+    <div class="status-pill">
+      <span class="status-dot off" id="statusDot"></span>
+      <span id="statusLabel">Idle</span>
     </div>
-    <div class="controls">
-        <select id="modelSelect"></select>
-        <button id="startBtn" class="primary">Start Session</button>
-        <button id="stopBtn" class="danger" disabled>Stop Session</button>
-        <div class="toggle-group">
-            <input type="checkbox" id="privacyToggle" checked>
-            <label for="privacyToggle">Privacy</label>
-        </div>
-        <div class="toggle-group">
-            <input type="checkbox" id="muteToggle">
-            <label for="muteToggle">Mute TTS</label>
-        </div>
-    </div>
+    <span id="clock"></span>
+  </div>
 </div>
 
-<!-- ===== MAIN GRID ===== -->
+<!-- Main -->
 <div class="main">
+  <div class="dashboard">
 
-    <!-- Video -->
-    <div class="video-panel" id="videoPanel">
-        <div class="video-placeholder" id="videoPlaceholder">
-            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#484f58" stroke-width="1.5">
-                <path d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"/>
-            </svg>
-            <p>Click "Start Session" to begin</p>
+    <!-- Burnout Gauge -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Burnout Risk</span>
+        <span class="card-badge">Real-time</span>
+      </div>
+      <div class="gauge-ring">
+        <div class="gauge-inner">
+          <div class="gauge-value" id="burnoutValue" style="color:var(--accent-green)">0</div>
+          <div class="gauge-label">Score</div>
         </div>
-        <img id="videoFeed" style="display:none" alt="Live Feed">
+      </div>
+      <div class="gauge-status" id="burnoutStatus" style="color:var(--accent-green)">LOW</div>
     </div>
 
-    <!-- Emotions sidebar -->
-    <div class="emotions-panel">
-        <h2>Live Emotion Data</h2>
-
-        <div class="emotion-bar-group" id="emotionBars">
-            <div class="stat-row"><span>Waiting for data...</span></div>
-        </div>
-
-        <div class="burnout-section">
-            <h3>Burnout Risk</h3>
-            <div class="burnout-track">
-                <div class="burnout-fill" id="burnoutFill" style="width:0%;background:#0c0"></div>
-                <span class="burnout-text" id="burnoutText">0%</span>
-            </div>
-        </div>
-
-        <div style="margin-bottom:16px">
-            <h3 style="font-size:13px;margin-bottom:4px">Bias Check</h3>
-            <div class="stat-row"><span id="biasText">Collecting data...</span></div>
-        </div>
-
-        <div>
-            <div class="stat-row"><span>Samples</span><span id="samplesText">0</span></div>
-            <div class="stat-row"><span>Session</span><span id="elapsedText">00:00</span></div>
-            <div class="stat-row"><span>Model</span><span id="modelText">-</span></div>
-        </div>
+    <!-- Emotion Bars -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Emotion Breakdown</span>
+        <span class="card-badge">DeepFace</span>
+      </div>
+      <div id="emotionBars">
+        <div style="font-size:11px;color:var(--text-muted)">Start a session to see live data...</div>
+      </div>
     </div>
 
-    <!-- Heart Rate placeholder -->
-    <div class="heartrate-panel">
-        <h2>Heart Rate Monitor</h2>
-        <div class="hr-bpm">-- BPM</div>
-        <svg class="flatline" viewBox="0 0 200 40">
-            <line x1="0" y1="20" x2="200" y2="20"/>
-        </svg>
-        <div class="hr-placeholder">Awaiting sensor integration</div>
+    <!-- Metrics Row -->
+    <div class="metrics-row">
+      <div class="metric-card">
+        <div class="metric-icon">&#10084;&#65039;</div>
+        <div class="metric-value" id="hrValue" style="color:var(--accent-red)">--</div>
+        <div class="metric-name">Heart Rate</div>
+        <div class="metric-trend" id="hrTrend" style="color:var(--text-muted)">No sensor</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">&#128168;</div>
+        <div class="metric-value" id="spo2Value" style="color:var(--accent-blue)">--</div>
+        <div class="metric-name">SpO2 %</div>
+        <div class="metric-trend" id="spo2Trend" style="color:var(--text-muted)">No sensor</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">&#129504;</div>
+        <div class="metric-value" id="biasValue" style="color:var(--accent-amber)">--</div>
+        <div class="metric-name">Bias Check</div>
+        <div class="metric-trend" id="biasTrend" style="color:var(--text-muted)">Collecting...</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon">&#9201;&#65039;</div>
+        <div class="metric-value" id="sessionTime" style="color:var(--accent-teal)">00:00</div>
+        <div class="metric-name">Session</div>
+        <div class="metric-trend" id="sampleCount" style="color:var(--text-muted)">0 samples</div>
+      </div>
     </div>
 
-    <!-- Chat -->
-    <div class="chat-panel">
-        <div class="chat-header">
-            <h2>AI Wellness Advisor</h2>
-            <button id="supportBtn" style="margin-left:auto;font-size:12px;padding:4px 10px" class="primary">
-                Report + AI Support
-            </button>
-        </div>
-        <div class="chat-messages" id="chatMessages">
-            <div class="chat-msg assistant">
-                Hi! I'm your AI wellness advisor. Start a session and click
-                "Report + AI Support" to get a burnout assessment, or just chat with me below.
-            </div>
-        </div>
-        <div class="tts-status" id="ttsStatus">TTS: Loading model on first use...</div>
-        <div class="chat-input-area">
-            <input type="text" id="chatInput" placeholder="Chat with your wellness advisor..." disabled>
-            <button id="chatSendBtn" disabled>Send</button>
-        </div>
+    <!-- HR Chart -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Heart Rate History</span>
+        <span class="card-badge" style="color:var(--accent-red);background:rgba(239,68,68,0.1)">BPM</span>
+      </div>
+      <div style="font-family:'JetBrains Mono',monospace;font-size:20px;font-weight:700;color:var(--accent-red)">
+        <span id="hrBig">--</span>
+        <span style="font-size:12px;color:var(--text-secondary);font-weight:400"> bpm</span>
+      </div>
+      <div class="hr-chart-area"><canvas id="hrChart"></canvas></div>
     </div>
+
+    <!-- Session Info -->
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Session Info</span>
+        <span class="card-badge" id="modelBadge">-</span>
+      </div>
+      <div style="font-size:12px;color:var(--text-secondary);line-height:2">
+        <div>Model: <span id="modelInfo" style="color:var(--text-primary)">-</span></div>
+        <div>Privacy: <span id="privacyInfo" style="color:var(--accent-green)">ON</span></div>
+        <div>Status: <span id="runningInfo" style="color:var(--text-muted)">Idle</span></div>
+      </div>
+    </div>
+
+    <!-- Report Card -->
+    <div class="card report-card">
+      <div class="card-header">
+        <span class="card-title">Latest Report</span>
+        <span class="card-badge" id="reportTime">-</span>
+      </div>
+      <div class="report-content" id="reportContent">Press R in the camera window to generate a report.</div>
+    </div>
+
+    <!-- Keyboard Legend -->
+    <div class="key-legend">
+      <span>Camera Window Keys:</span>
+      <span><kbd>Q</kbd> Quit</span>
+      <span><kbd>R</kbd> Report</span>
+      <span><kbd>P</kbd> Privacy</span>
+      <span><kbd>S</kbd> AI Support</span>
+      <span><kbd>H</kbd> Heart Rate</span>
+    </div>
+  </div>
+
+  <!-- Chat Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">
+      <h2><span class="ai-dot"></span> AI Wellness Advisor</h2>
+      <p>Powered by Ollama (Qwen3) — running locally</p>
+    </div>
+    <div class="chat-messages" id="chatMessages">
+      <div class="chat-msg msg-system">Start a session to begin monitoring.</div>
+      <div class="chat-msg msg-ai">
+        <div class="msg-sender">StressLens AI</div>
+        Hey there! I'm your wellness companion. Start a session and press S in the camera window for AI support, or chat with me here.
+      </div>
+    </div>
+    <div class="tts-bar">
+      <span id="ttsStatus">TTS: Ready on first use</span>
+      <button class="mute-toggle" id="muteToggle">Unmuted</button>
+    </div>
+    <div class="chat-input">
+      <input type="text" placeholder="Ask for wellness advice..." id="chatInput" disabled>
+      <button id="chatSendBtn" disabled>Send</button>
+    </div>
+  </div>
 </div>
 
 <script type="module">
-    // ============================================================
-    // KokoroJS TTS (browser-side, fully offline)
-    // ============================================================
-    let tts = null;
-    let ttsLoading = false;
-    const ttsStatus = document.getElementById('ttsStatus');
+  // ============================================================
+  // TTS (KokoroJS — browser-side, offline)
+  // ============================================================
+  let tts = null, ttsLoading = false, muted = false, speaking = false;
+  const ttsStatus = document.getElementById('ttsStatus');
+  const muteToggle = document.getElementById('muteToggle');
+  muteToggle.onclick = () => { muted = !muted; muteToggle.textContent = muted ? 'Muted' : 'Unmuted'; };
 
-    async function initTTS() {
-        if (tts || ttsLoading) return;
-        ttsLoading = true;
-        ttsStatus.textContent = 'TTS: Downloading model (~86MB)...';
-        try {
-            const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
-            tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-ONNX', { dtype: 'q8' });
-            ttsStatus.textContent = 'TTS: Ready (Kokoro, offline)';
-        } catch (e) {
-            console.error('TTS init error:', e);
-            ttsStatus.textContent = 'TTS: Failed to load - ' + e.message;
-        }
-        ttsLoading = false;
+  async function initTTS() {
+    if (tts || ttsLoading) return;
+    ttsLoading = true;
+    ttsStatus.textContent = 'TTS: Downloading (~86MB)...';
+    try {
+      const { KokoroTTS } = await import('https://cdn.jsdelivr.net/npm/kokoro-js@1.2.0/+esm');
+      tts = await KokoroTTS.from_pretrained('onnx-community/Kokoro-82M-ONNX', { dtype: 'q8' });
+      ttsStatus.textContent = 'TTS: Ready';
+    } catch (e) {
+      ttsStatus.textContent = 'TTS: Failed - ' + e.message;
     }
+    ttsLoading = false;
+  }
 
-    async function speak(text) {
-        if (document.getElementById('muteToggle').checked) return;
-        if (!tts) await initTTS();
-        if (!tts) return;
-        try {
-            ttsStatus.textContent = 'TTS: Generating speech...';
-            const result = await tts.generate(text, { voice: 'af_heart' });
-            ttsStatus.textContent = 'TTS: Playing...';
-            // result may be an AudioBuffer, a blob, or have a toBlob method
-            if (typeof result.play === 'function') {
-                await result.play();
-            } else {
-                // Convert to playable audio via blob
-                const blob = (typeof result.toBlob === 'function')
-                    ? await result.toBlob()
-                    : new Blob([result.audio || result], { type: 'audio/wav' });
-                const url = URL.createObjectURL(blob);
-                const el = new Audio(url);
-                await el.play();
-                el.onended = () => URL.revokeObjectURL(url);
-            }
-            ttsStatus.textContent = 'TTS: Ready (Kokoro, offline)';
-        } catch (e) {
-            console.error('TTS error:', e);
-            ttsStatus.textContent = 'TTS: Error - ' + e.message;
-        }
+  async function speak(text) {
+    if (muted || speaking) return;
+    speaking = true;
+    try {
+      if (!tts) await initTTS();
+      if (!tts) { speaking = false; return; }
+      ttsStatus.textContent = 'TTS: Generating...';
+      const short = text.length > 500 ? text.slice(0, 500) : text;
+      const result = await tts.generate(short, { voice: 'af_heart' });
+      ttsStatus.textContent = 'TTS: Playing...';
+      if (typeof result.play === 'function') {
+        await result.play();
+      } else {
+        const blob = (typeof result.toBlob === 'function')
+          ? await result.toBlob()
+          : new Blob([result.audio || result], { type: 'audio/wav' });
+        const url = URL.createObjectURL(blob);
+        const el = new Audio(url);
+        await el.play();
+        el.onended = () => URL.revokeObjectURL(url);
+      }
+      ttsStatus.textContent = 'TTS: Ready';
+    } catch (e) {
+      ttsStatus.textContent = 'TTS: Error - ' + e.message;
+    } finally { speaking = false; }
+  }
+
+  // ============================================================
+  // DOM
+  // ============================================================
+  const $ = id => document.getElementById(id);
+  const startBtn = $('startBtn'), stopBtn = $('stopBtn'), modelSelect = $('modelSelect');
+  const statusDot = $('statusDot'), statusLabel = $('statusLabel');
+  const burnoutValue = $('burnoutValue'), burnoutStatus = $('burnoutStatus');
+  const emotionBars = $('emotionBars');
+  const hrValue = $('hrValue'), spo2Value = $('spo2Value'), hrBig = $('hrBig');
+  const hrTrend = $('hrTrend'), spo2Trend = $('spo2Trend');
+  const biasValue = $('biasValue'), biasTrend = $('biasTrend');
+  const sessionTime = $('sessionTime'), sampleCount = $('sampleCount');
+  const modelInfo = $('modelInfo'), privacyInfo = $('privacyInfo'), runningInfo = $('runningInfo');
+  const modelBadge = $('modelBadge');
+  const reportContent = $('reportContent'), reportTime = $('reportTime');
+  const chatMessages = $('chatMessages'), chatInput = $('chatInput'), chatSendBtn = $('chatSendBtn');
+
+  let ws = null;
+  const hrHistory = [];
+  const EC = {
+    happy:'#22c55e', sad:'#3b82f6', angry:'#ef4444',
+    surprise:'#f59e0b', fear:'#a855f7', disgust:'#06b6d4', neutral:'#64748b'
+  };
+
+  // ── Clock ──
+  setInterval(() => {
+    $('clock').textContent = new Date().toLocaleTimeString('en-IN',
+      { hour:'2-digit', minute:'2-digit', second:'2-digit' });
+  }, 1000);
+
+  // ── Load models ──
+  fetch('/api/models').then(r => r.json()).then(data => {
+    data.models.forEach(m => {
+      const o = document.createElement('option');
+      o.value = m.id; o.textContent = m.name;
+      if (m.id === data.current) o.selected = true;
+      modelSelect.appendChild(o);
+    });
+  });
+
+  // ── HR Chart ──
+  const canvas = $('hrChart'), ctx = canvas.getContext('2d');
+  function drawHRChart() {
+    const W = canvas.width = canvas.offsetWidth * 2;
+    const H = canvas.height = canvas.offsetHeight * 2;
+    ctx.clearRect(0, 0, W, H);
+    if (hrHistory.length < 2) return;
+    const data = hrHistory.slice(-60);
+    const mn = Math.min(...data) - 5, mx = Math.max(...data) + 5, range = mx - mn || 1;
+    ctx.strokeStyle = '#ef4444'; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = (i / (data.length - 1)) * W, y = H - ((v - mn) / range) * H;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(239,68,68,0.15)'; ctx.lineWidth = 6;
+    ctx.beginPath();
+    data.forEach((v, i) => {
+      const x = (i / (data.length - 1)) * W, y = H - ((v - mn) / range) * H;
+      i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+  }
+
+  // ── Update functions ──
+  function updateDashboard(d) {
+    // Emotions
+    if (d.emotions && Object.keys(d.emotions).length > 0) {
+      const sorted = Object.entries(d.emotions).sort((a, b) => b[1] - a[1]);
+      emotionBars.innerHTML = sorted.map(([n, v]) => {
+        const p = Math.round(v * 100);
+        return `<div class="emotion-row">
+          <span class="emotion-label">${n}</span>
+          <div class="emotion-bar-bg"><div class="emotion-bar-fill" style="width:${p}%;background:${EC[n]||'#64748b'}"></div></div>
+          <span class="emotion-pct">${p}%</span>
+        </div>`;
+      }).join('');
     }
-
-    // ============================================================
-    // DOM refs
-    // ============================================================
-    const modelSelect = document.getElementById('modelSelect');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const privacyToggle = document.getElementById('privacyToggle');
-    const videoFeed = document.getElementById('videoFeed');
-    const videoPlaceholder = document.getElementById('videoPlaceholder');
-    const emotionBars = document.getElementById('emotionBars');
-    const burnoutFill = document.getElementById('burnoutFill');
-    const burnoutText = document.getElementById('burnoutText');
-    const biasText = document.getElementById('biasText');
-    const samplesText = document.getElementById('samplesText');
-    const elapsedText = document.getElementById('elapsedText');
-    const modelText = document.getElementById('modelText');
-    const chatMessages = document.getElementById('chatMessages');
-    const chatInput = document.getElementById('chatInput');
-    const chatSendBtn = document.getElementById('chatSendBtn');
-    const supportBtn = document.getElementById('supportBtn');
-
-    let ws = null;
-
-    // ============================================================
-    // Load models
-    // ============================================================
-    async function loadModels() {
-        const res = await fetch('/api/models');
-        const data = await res.json();
-        modelSelect.innerHTML = '';
-        data.models.forEach(m => {
-            const opt = document.createElement('option');
-            opt.value = m.id;
-            opt.textContent = m.name;
-            if (m.id === data.current) opt.selected = true;
-            modelSelect.appendChild(opt);
-        });
+    // Burnout
+    const b = d.burnout || 0;
+    burnoutValue.textContent = Math.round(b);
+    let bC, bL;
+    if (b >= 75) { bC = 'var(--accent-red)'; bL = 'CRITICAL'; }
+    else if (b >= 50) { bC = 'var(--accent-amber)'; bL = 'HIGH'; }
+    else if (b >= 25) { bC = 'var(--accent-amber)'; bL = 'MODERATE'; }
+    else { bC = 'var(--accent-green)'; bL = 'LOW'; }
+    burnoutValue.style.color = bC; burnoutStatus.style.color = bC; burnoutStatus.textContent = bL;
+    // Bias
+    biasValue.textContent = d.bias ? d.bias.split(' ')[0] : '--';
+    biasTrend.textContent = d.bias || 'Collecting...';
+    // Session
+    const m = Math.floor(d.elapsed / 60), s = d.elapsed % 60;
+    sessionTime.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    sampleCount.textContent = `${d.samples} samples`;
+    modelInfo.textContent = d.model; modelBadge.textContent = d.model;
+    privacyInfo.textContent = d.privacy ? 'ON' : 'OFF';
+    privacyInfo.style.color = d.privacy ? 'var(--accent-green)' : 'var(--accent-red)';
+    runningInfo.textContent = d.running ? 'Active' : 'Idle';
+    runningInfo.style.color = d.running ? 'var(--accent-green)' : 'var(--text-muted)';
+    // HR
+    if (d.hr_connected && d.bpm > 0) {
+      hrValue.textContent = d.bpm; hrBig.textContent = d.bpm;
+      hrValue.style.color = d.bpm > 100 ? 'var(--accent-red)' : 'var(--accent-green)';
+      hrTrend.textContent = d.bpm > 100 ? 'Elevated' : d.bpm < 60 ? 'Low' : 'Normal';
+      hrTrend.style.color = d.bpm > 100 ? 'var(--accent-red)' : 'var(--accent-green)';
+      spo2Value.textContent = d.spo2;
+      spo2Trend.textContent = d.spo2 >= 95 ? 'Normal' : 'Low';
+      spo2Trend.style.color = d.spo2 >= 95 ? 'var(--accent-green)' : 'var(--accent-red)';
+      hrHistory.push(d.bpm);
+      if (hrHistory.length > 60) hrHistory.shift();
+      drawHRChart();
+    } else {
+      hrValue.textContent = '--'; hrBig.textContent = '--';
+      hrTrend.textContent = d.hr_connected ? 'Place finger...' : 'No sensor';
+      hrTrend.style.color = 'var(--text-muted)';
+      spo2Value.textContent = '--'; spo2Trend.textContent = d.hr_connected ? 'Waiting...' : 'No sensor';
     }
-    loadModels();
+    // If session stopped from camera window Q key
+    if (!d.running && statusDot.classList.contains('on')) {
+      statusDot.className = 'status-dot off'; statusLabel.textContent = 'Idle';
+      startBtn.disabled = false; stopBtn.disabled = true;
+      modelSelect.disabled = false;
+    }
+  }
 
-    // ============================================================
-    // Emotion colors
-    // ============================================================
-    const EMOTION_COLORS = {
-        happy: '#00c800', sad: '#c86400', angry: '#dc0000',
-        surprise: '#00dcdc', fear: '#b400b4',
-        disgust: '#008c8c', neutral: '#b4b4b4',
+  function displayReport(text) {
+    reportContent.textContent = text;
+    reportTime.textContent = new Date().toLocaleTimeString();
+  }
+
+  function escHtml(t) { const d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+  function addMsg(type, content, thinking) {
+    const div = document.createElement('div');
+    if (type === 'system') { div.className = 'chat-msg msg-system'; div.textContent = content; }
+    else if (type === 'report') { div.className = 'chat-msg msg-report'; div.textContent = content; }
+    else if (type === 'user') { div.className = 'chat-msg msg-user'; div.textContent = content; }
+    else {
+      div.className = 'chat-msg msg-ai';
+      let html = '<div class="msg-sender">StressLens AI</div>';
+      if (thinking) {
+        const s = thinking.length > 200 ? thinking.slice(0, 200) + '...' : thinking;
+        html += `<div class="msg-thinking">Thinking: ${escHtml(s)}</div>`;
+      }
+      html += escHtml(content);
+      div.innerHTML = html;
+    }
+    chatMessages.appendChild(div);
+    chatMessages.scrollTop = chatMessages.scrollHeight;
+  }
+
+  // ── WebSocket ──
+  function connectWS() {
+    const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+    ws = new WebSocket(`${proto}://${location.host}/ws`);
+    ws.onmessage = (e) => {
+      const msg = JSON.parse(e.data);
+      switch (msg.type) {
+        case 'state':
+          updateDashboard(msg.data);
+          break;
+        case 'report':
+          displayReport(msg.data.report);
+          addMsg('system', 'Report generated (R key)');
+          addMsg('report', msg.data.report);
+          break;
+        case 'support':
+          displayReport(msg.data.report);
+          addMsg('system', 'AI Support generated (S key)');
+          addMsg('report', msg.data.report);
+          addMsg('ai', msg.data.response, msg.data.thinking);
+          speak(msg.data.response).catch(e => console.warn('TTS:', e));
+          break;
+        case 'heartrate':
+          addMsg('system', `Heart Rate: ${msg.data.bpm} BPM | SpO2: ${msg.data.spo2}%`);
+          break;
+        case 'chat_response':
+          addMsg('ai', msg.data.response, msg.data.thinking);
+          speak(msg.data.response).catch(e => console.warn('TTS:', e));
+          break;
+      }
     };
+    ws.onclose = () => { ws = null; };
+  }
 
-    // ============================================================
-    // WebSocket for live data
-    // ============================================================
-    function connectWS() {
-        const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-        ws = new WebSocket(`${proto}://${location.host}/ws/emotions`);
-        ws.onmessage = (e) => {
-            const d = JSON.parse(e.data);
-            updateEmotions(d.emotions);
-            updateBurnout(d.burnout);
-            biasText.textContent = d.bias;
-            samplesText.textContent = d.samples;
-            const m = Math.floor(d.elapsed / 60);
-            const s = d.elapsed % 60;
-            elapsedText.textContent = `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
-            modelText.textContent = d.model;
-        };
-        ws.onclose = () => { ws = null; };
+  // ── Session Controls ──
+  startBtn.onclick = async () => {
+    startBtn.disabled = true;
+    const res = await fetch('/api/session/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ model: modelSelect.value }),
+    });
+    const data = await res.json();
+    if (res.ok) {
+      stopBtn.disabled = false; modelSelect.disabled = true;
+      chatInput.disabled = false; chatSendBtn.disabled = false;
+      statusDot.className = 'status-dot on'; statusLabel.textContent = 'Monitoring';
+      connectWS();
+      initTTS();
+      addMsg('system', 'Session started. Camera window is open — use keyboard shortcuts there.');
+    } else {
+      alert(data.error || 'Failed to start');
+      startBtn.disabled = false;
     }
+  };
 
-    function disconnectWS() {
-        if (ws) { ws.close(); ws = null; }
-    }
+  stopBtn.onclick = async () => {
+    stopBtn.disabled = true;
+    if (ws) { ws.close(); ws = null; }
+    const res = await fetch('/api/session/stop', { method: 'POST' });
+    const data = await res.json();
+    startBtn.disabled = false; modelSelect.disabled = false;
+    chatInput.disabled = true; chatSendBtn.disabled = true;
+    statusDot.className = 'status-dot off'; statusLabel.textContent = 'Idle';
+    if (data.report) { displayReport(data.report); addMsg('report', data.report); }
+    addMsg('system', 'Session ended.');
+  };
 
-    function updateEmotions(emotions) {
-        if (!emotions || Object.keys(emotions).length === 0) return;
-        const sorted = Object.entries(emotions).sort((a, b) => b[1] - a[1]);
-        emotionBars.innerHTML = sorted.map(([em, val]) => `
-            <div class="emotion-row">
-                <span class="emotion-label">${em}</span>
-                <div class="emotion-track">
-                    <div class="emotion-fill" style="width:${(val*100).toFixed(0)}%;background:${EMOTION_COLORS[em]||'#888'}"></div>
-                </div>
-                <span class="emotion-value">${(val*100).toFixed(0)}%</span>
-            </div>
-        `).join('');
-    }
-
-    function updateBurnout(score) {
-        let color = '#0c0', level = 'LOW';
-        if (score >= 75) { color = '#f00'; level = 'CRITICAL'; }
-        else if (score >= 50) { color = '#f80'; level = 'HIGH'; }
-        else if (score >= 25) { color = '#fc0'; level = 'MODERATE'; }
-        burnoutFill.style.width = score.toFixed(0) + '%';
-        burnoutFill.style.background = color;
-        burnoutText.textContent = `${score.toFixed(0)}% - ${level}`;
-    }
-
-    // ============================================================
-    // Session controls
-    // ============================================================
-    startBtn.onclick = async () => {
-        startBtn.disabled = true;
-        const res = await fetch('/api/session/start', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ model: modelSelect.value }),
-        });
-        const data = await res.json();
-        if (res.ok) {
-            videoPlaceholder.style.display = 'none';
-            videoFeed.src = '/api/video_feed';
-            videoFeed.style.display = 'block';
-            stopBtn.disabled = false;
-            chatInput.disabled = false;
-            chatSendBtn.disabled = false;
-            modelSelect.disabled = true;
-            connectWS();
-            initTTS(); // preload TTS model in background
-        } else {
-            alert(data.error || 'Failed to start session');
-            startBtn.disabled = false;
-        }
-    };
-
-    stopBtn.onclick = async () => {
-        stopBtn.disabled = true;
-        disconnectWS();
-        const res = await fetch('/api/session/stop', { method: 'POST' });
-        const data = await res.json();
-        videoFeed.style.display = 'none';
-        videoFeed.src = '';
-        videoPlaceholder.style.display = '';
-        startBtn.disabled = false;
-        modelSelect.disabled = false;
-        chatInput.disabled = true;
-        chatSendBtn.disabled = true;
-        if (data.report) {
-            addMessage('report', data.report);
-        }
-    };
-
-    privacyToggle.onchange = () => {
-        fetch('/api/settings', {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({ privacy_mode: privacyToggle.checked }),
-        });
-    };
-
-    // ============================================================
-    // Chat
-    // ============================================================
-    function addMessage(type, content, thinking) {
-        const div = document.createElement('div');
-        div.className = `chat-msg ${type}`;
-        if (type === 'report') {
-            div.textContent = content;
-        } else {
-            let html = '';
-            if (thinking) {
-                const short = thinking.length > 200 ? thinking.slice(0, 200) + '...' : thinking;
-                html += `<div class="thinking">Thinking: ${escapeHtml(short)}</div>`;
-            }
-            html += escapeHtml(content);
-            div.innerHTML = html;
-        }
-        chatMessages.appendChild(div);
-        chatMessages.scrollTop = chatMessages.scrollHeight;
-    }
-
-    function escapeHtml(text) {
-        const d = document.createElement('div');
-        d.textContent = text;
-        return d.innerHTML;
-    }
-
-    supportBtn.onclick = async () => {
-        supportBtn.disabled = true;
-        supportBtn.innerHTML = '<span class="spinner"></span> Thinking...';
-        try {
-            const res = await fetch('/api/support', { method: 'POST' });
-            const data = await res.json();
-            if (res.ok) {
-                addMessage('report', data.report);
-                addMessage('assistant', data.response, data.thinking);
-                speak(data.response);
-            } else {
-                addMessage('assistant', data.error || 'Error generating support');
-            }
-        } catch (e) {
-            addMessage('assistant', 'Network error: ' + e.message);
-        }
-        supportBtn.disabled = false;
-        supportBtn.textContent = 'Report + AI Support';
-    };
-
-    async function sendChat() {
-        const msg = chatInput.value.trim();
-        if (!msg) return;
-        chatInput.value = '';
-        addMessage('user', msg);
-        chatSendBtn.disabled = true;
-        chatInput.disabled = true;
-        try {
-            const res = await fetch('/api/chat', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify({ message: msg }),
-            });
-            const data = await res.json();
-            addMessage('assistant', data.response, data.thinking);
-            speak(data.response);
-        } catch (e) {
-            addMessage('assistant', 'Network error: ' + e.message);
-        }
-        chatSendBtn.disabled = false;
-        chatInput.disabled = false;
-        chatInput.focus();
-    }
-
-    chatSendBtn.onclick = sendChat;
-    chatInput.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
+  // ── Chat ──
+  function sendChat() {
+    const msg = chatInput.value.trim();
+    if (!msg || !ws) return;
+    addMsg('user', msg);
+    ws.send(JSON.stringify({ type: 'chat', data: { message: msg } }));
+    chatInput.value = '';
+  }
+  chatSendBtn.onclick = sendChat;
+  chatInput.onkeydown = (e) => { if (e.key === 'Enter') sendChat(); };
 </script>
 </body>
 </html>

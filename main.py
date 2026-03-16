@@ -19,8 +19,15 @@ import threading
 import time
 import ollama
 import sounddevice as sd
-from kokoro_onnx import Kokoro
+from kokoro_onnx import Kokoro, SAMPLE_RATE
 from huggingface_hub import hf_hub_download
+from pathlib import Path
+from types import MethodType
+
+try:
+    import serial
+except Exception:
+    serial = None
 
 AVAILABLE_MODELS = {
     "1": ("qwen3:4b", "Qwen3 4B (Best quality, slower)"),
@@ -30,6 +37,19 @@ AVAILABLE_MODELS = {
 OLLAMA_MODEL = "qwen3:4b"  # default, overridden by user selection
 AUTO_REPORT_INTERVAL = 45 * 60  # 45 minutes in seconds
 TTS_PIPELINE = None  # initialized lazily
+KOKORO_REPO_ID = "onnx-community/Kokoro-82M-v1.0-ONNX"
+KOKORO_MODEL_FILE = "onnx/model.onnx"
+KOKORO_VOICE_ID = "af_heart"
+KOKORO_VOICE_RAW_FILE = f"voices/{KOKORO_VOICE_ID}.bin"
+KOKORO_VOICE_BUNDLE = f"voices-{KOKORO_VOICE_ID}-v1.0.npz"
+HEART_SENSOR_PORT = os.getenv("HEART_SENSOR_PORT", "COM9")
+HEART_SENSOR_BAUD = int(os.getenv("HEART_SENSOR_BAUD", "9600"))
+HEART_SENSOR_SERIAL_TIMEOUT = float(os.getenv("HEART_SENSOR_SERIAL_TIMEOUT", "1.0"))
+HEART_SENSOR_WARMUP_SECONDS = float(os.getenv("HEART_SENSOR_WARMUP_SECONDS", "2.0"))
+HEART_SENSOR_MAX_WAIT_SECONDS = float(os.getenv("HEART_SENSOR_MAX_WAIT_SECONDS", "60.0"))
+HEART_SENSOR_LOCK = threading.Lock()
+HEART_METRICS_LOCK = threading.Lock()
+LAST_HEART_METRICS = None
 
 
 # ============================================================
@@ -104,7 +124,7 @@ def draw_burnout_gauge(frame, score, x, y):
                 cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
 
-def generate_report(emotion_history, burnout_scores, session_start):
+def generate_report(emotion_history, burnout_scores, session_start, heart_metrics=None):
     now = datetime.now()
     duration = (now - session_start).seconds
     lines = []
@@ -145,6 +165,16 @@ def generate_report(emotion_history, burnout_scores, session_start):
             lines.append("  STATUS: HIGH RISK - Recommend break / support")
         else:
             lines.append("  STATUS: CRITICAL - Immediate intervention suggested")
+
+    lines.append("-" * 55)
+    lines.append("  HEART SENSOR SUMMARY:")
+    if heart_metrics:
+        lines.append(f"  HEART RATE (BPM)  : {heart_metrics['bpm']}")
+        lines.append(f"  BLOOD OXYGEN      : {heart_metrics['spo2']}%")
+    else:
+        lines.append("  HEART RATE (BPM)  : Not captured")
+        lines.append("  BLOOD OXYGEN      : Not captured")
+
     lines.append("-" * 55)
     lines.append("  PRIVACY NOTE: No facial data was stored.")
     lines.append("  All processing was done locally in real-time.")
@@ -178,16 +208,137 @@ def send_to_ollama(report):
         return None, f"[Ollama error: {e}]"
 
 
+def parse_heart_sensor_line(line):
+    values = {}
+    for part in line.split(','):
+        if ':' not in part:
+            continue
+        key, raw_val = part.split(':', 1)
+        values[key.strip().lower()] = raw_val.strip().rstrip('%')
+
+    bpm_txt = values.get('bpm')
+    spo2_txt = values.get('spo2')
+    if not bpm_txt or not spo2_txt:
+        return None
+
+    try:
+        bpm = int(float(bpm_txt))
+        spo2 = int(float(spo2_txt))
+    except ValueError:
+        return None
+
+    return {"bpm": bpm, "spo2": spo2}
+
+
+def capture_heart_metrics():
+    """Wait for heart sensor reading and return BPM/SpO2 metrics."""
+    global LAST_HEART_METRICS
+
+    if serial is None:
+        console.print("  [yellow]Heart sensor unavailable: install pyserial to enable it.[/]")
+        return None
+
+    console.print("  [bold cyan]Heart Sensor:[/] Place finger on sensor and hold still...")
+
+    try:
+        with HEART_SENSOR_LOCK:
+            with serial.Serial(HEART_SENSOR_PORT, HEART_SENSOR_BAUD, timeout=HEART_SENSOR_SERIAL_TIMEOUT) as ser:
+                time.sleep(HEART_SENSOR_WARMUP_SECONDS)
+                start_wait = time.time()
+
+                while True:
+                    if HEART_SENSOR_MAX_WAIT_SECONDS > 0:
+                        if (time.time() - start_wait) >= HEART_SENSOR_MAX_WAIT_SECONDS:
+                            console.print("  [yellow]Heart sensor timeout: no reading received.[/]")
+                            return None
+
+                    line = ser.readline().decode(errors='ignore').strip()
+                    if not line:
+                        continue
+
+                    metrics = parse_heart_sensor_line(line)
+                    if metrics:
+                        metrics['captured_at'] = datetime.now()
+                        with HEART_METRICS_LOCK:
+                            LAST_HEART_METRICS = metrics
+                        console.print(
+                            f"  [green]Heart reading captured:[/] BPM={metrics['bpm']} | SpO2={metrics['spo2']}%"
+                        )
+                        return metrics
+    except Exception as e:
+        console.print(f"  [yellow]Heart sensor error: {e}[/]")
+        return None
+
+
+def prepare_kokoro_assets():
+    """Download assets and convert raw HF voice data to kokoro_onnx voice bundle format."""
+    model_path = hf_hub_download(KOKORO_REPO_ID, KOKORO_MODEL_FILE)
+    raw_voice_path = hf_hub_download(KOKORO_REPO_ID, KOKORO_VOICE_RAW_FILE)
+
+    cache_dir = Path(__file__).resolve().parent / ".cache" / "kokoro"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    voices_bundle_path = cache_dir / KOKORO_VOICE_BUNDLE
+
+    rebuild_bundle = True
+    if voices_bundle_path.exists():
+        try:
+            with np.load(voices_bundle_path) as bundle:
+                rebuild_bundle = KOKORO_VOICE_ID not in bundle.files
+        except Exception:
+            rebuild_bundle = True
+
+    if rebuild_bundle:
+        console.print("  [dim]Preparing Kokoro voice bundle...[/]")
+        voice_data = np.fromfile(raw_voice_path, dtype=np.float32)
+        if voice_data.size % 256 != 0:
+            raise ValueError(
+                f"Unexpected voice tensor size {voice_data.size} from {KOKORO_VOICE_RAW_FILE}"
+            )
+        voice_style = voice_data.reshape(-1, 1, 256)
+        np.savez(voices_bundle_path, **{KOKORO_VOICE_ID: voice_style})
+
+    return model_path, str(voices_bundle_path)
+
+
+def apply_kokoro_runtime_compat(pipeline):
+    """Patch kokoro_onnx runtime handling for onnx-community v1.0 model inputs."""
+    input_names = [item.name for item in pipeline.sess.get_inputs()]
+    if "input_ids" not in input_names:
+        return
+
+    speed_input = next((item for item in pipeline.sess.get_inputs() if item.name == "speed"), None)
+    speed_dtype = np.float32 if (speed_input and "float" in speed_input.type) else np.int32
+
+    def _create_audio_compat(self, phonemes, voice, speed):
+        phonemes = phonemes[:510]
+        tokens = np.array(self.tokenizer.tokenize(phonemes), dtype=np.int64)
+        if len(tokens) > 510:
+            tokens = tokens[:510]
+
+        voice = voice[len(tokens)]
+        token_batch = [[0, *tokens.tolist(), 0]]
+        inputs = {
+            "input_ids": token_batch,
+            "style": np.array(voice, dtype=np.float32),
+            "speed": np.array([speed], dtype=speed_dtype),
+        }
+        audio = self.sess.run(None, inputs)[0]
+        return np.asarray(audio, dtype=np.float32).reshape(-1), SAMPLE_RATE
+
+    pipeline._create_audio = MethodType(_create_audio_compat, pipeline)
+
+
 def speak_text(text):
     """Convert text to speech using Kokoro TTS (fully offline)."""
     global TTS_PIPELINE
     try:
         if TTS_PIPELINE is None:
             console.print("  [dim]Loading Kokoro TTS model...[/]")
-            model_path = hf_hub_download("hexgrad/Kokoro-82M-v1.1-ONNX", "kokoro-v1.1.onnx")
-            voices_path = hf_hub_download("hexgrad/Kokoro-82M-v1.1-ONNX", "voices-v1.1.bin")
+            model_path, voices_path = prepare_kokoro_assets()
             TTS_PIPELINE = Kokoro(model_path, voices_path)
-        samples, sr = TTS_PIPELINE.create(text, voice="af_heart", speed=1.1)
+            apply_kokoro_runtime_compat(TTS_PIPELINE)
+        samples, sr = TTS_PIPELINE.create(text, voice=KOKORO_VOICE_ID, speed=1.1)
+        samples = np.asarray(samples, dtype=np.float32).reshape(-1)
         sd.play(samples, samplerate=sr)
         sd.wait()
     except Exception as e:
@@ -196,7 +347,13 @@ def speak_text(text):
 
 def save_report_and_get_support(emotion_history, burnout_scores, session_start):
     """Generate report, save it, send to Ollama, print supportive message."""
-    report = generate_report(list(emotion_history), list(burnout_scores), session_start)
+    heart_metrics = capture_heart_metrics()
+    report = generate_report(
+        list(emotion_history),
+        list(burnout_scores),
+        session_start,
+        heart_metrics=heart_metrics,
+    )
     fname = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
     with open(fname, 'w', encoding='utf-8') as f:
         f.write(report)
@@ -256,6 +413,7 @@ def main():
 
     console.print("  Webcam ready!")
     console.print("  Controls: Q=Quit  R=Report  P=Toggle Privacy  S=AI Support\n")
+    console.print(f"  Heart sensor: {HEART_SENSOR_PORT} @ {HEART_SENSOR_BAUD} baud")
 
     emotion_history = deque(maxlen=300)
     burnout_scores = deque(maxlen=300)
@@ -363,6 +521,19 @@ def main():
         cv2.putText(display, f"Samples: {len(emotion_history)}", (w - sidebar_w + 10, 398),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.38, (150, 150, 150), 1)
 
+        with HEART_METRICS_LOCK:
+            latest_metrics = dict(LAST_HEART_METRICS) if LAST_HEART_METRICS else None
+        if latest_metrics:
+            cv2.putText(display, f"BPM: {latest_metrics['bpm']}", (w - sidebar_w + 10, 418),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 230, 255), 1)
+            cv2.putText(display, f"SpO2: {latest_metrics['spo2']}%", (w - sidebar_w + 10, 436),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (100, 230, 255), 1)
+        else:
+            cv2.putText(display, "BPM: --", (w - sidebar_w + 10, 418),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 120), 1)
+            cv2.putText(display, "SpO2: --", (w - sidebar_w + 10, 436),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.38, (120, 120, 120), 1)
+
         # --- Face boxes (scale up from 320x240 analysis frame) ---
         scale_x = w / 320
         scale_y = h / 240
@@ -408,7 +579,14 @@ def main():
             privacy_mode = not privacy_mode
             console.print(f"  Privacy mode: {'ON' if privacy_mode else 'OFF'}")
         elif key == ord('r'):
-            report = generate_report(list(emotion_history), list(burnout_scores), session_start)
+            console.print("\n  Generating report (waiting for heart sensor)...")
+            heart_metrics = capture_heart_metrics()
+            report = generate_report(
+                list(emotion_history),
+                list(burnout_scores),
+                session_start,
+                heart_metrics=heart_metrics,
+            )
             console.print("\n" + report + "\n")
             fname = f"report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
             with open(fname, 'w', encoding='utf-8') as f:
