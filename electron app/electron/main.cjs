@@ -12,6 +12,9 @@ const pythonExecutable = fs.existsSync(pythonFromVenv) ? pythonFromVenv : 'pytho
 const useDevServer = process.argv.includes('--dev');
 const rendererEntry = path.join(electronAppRoot, 'dist', 'index.html');
 
+// Allow renderer audio playback for background advisor responses.
+app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
+
 let mainWindow = null;
 let bridgeProcess = null;
 let bridgeReady = false;
@@ -157,7 +160,7 @@ function createWindow() {
     height: 980,
     minWidth: 1280,
     minHeight: 820,
-    backgroundColor: '#09111c',
+    backgroundColor: '#1A1915',
     title: 'StressLens Electron',
     webPreferences: {
       contextIsolation: true,

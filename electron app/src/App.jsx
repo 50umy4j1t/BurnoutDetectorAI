@@ -1,817 +1,361 @@
-import { useEffect, useState } from 'react';
+import { useState, useEffect, useRef } from 'react'
+import TopBar from './components/TopBar'
+import VideoPanel from './components/VideoPanel'
+import BurnoutGauge from './components/BurnoutGauge'
+import MetricCards from './components/MetricCards'
+import EmotionPanel from './components/EmotionPanel'
+import HeartRateChart from './components/HeartRateChart'
+import AIChat from './components/AIChat'
+import BottomBar from './components/BottomBar'
+// TTS is handled by the Python backend (kokoro_onnx + sounddevice)
+import './App.css'
 
-const EMOTION_COLORS = {
-  happy: '#22c55e',
-  sad: '#3b82f6',
-  angry: '#ef4444',
-  surprise: '#f59e0b',
-  fear: '#a855f7',
-  disgust: '#06b6d4',
-  neutral: '#64748b',
-};
-
-const DEFAULT_TTS = {
-  available: false,
-  enabled: false,
-  state: 'unavailable',
-  message: 'Python TTS unavailable',
-};
-
-function timestampLabel(value) {
-  if (!value) {
-    return '--';
-  }
-
-  try {
-    return new Date(value).toLocaleString();
-  } catch {
-    return value;
-  }
-}
+/* ── Report parsing utilities ── */
 
 function extractLineValue(text, label) {
-  if (!text) {
-    return '--';
-  }
-
-  const line = text
-    .split(/\r?\n/)
-    .find((item) => item.includes(label));
-
-  if (!line) {
-    return '--';
-  }
-
-  const index = line.indexOf(label);
-  return line.slice(index + label.length).trim() || '--';
+  if (!text) return '--'
+  const line = text.split(/\r?\n/).find(l => l.includes(label))
+  if (!line) return '--'
+  return line.slice(line.indexOf(label) + label.length).trim() || '--'
 }
 
 function parseMetricNumber(value) {
-  const match = String(value || '').match(/-?\d+(?:\.\d+)?/);
-  return match ? Number(match[0]) : null;
+  const m = String(value || '').match(/-?\d+(?:\.\d+)?/)
+  return m ? Number(m[0]) : null
 }
 
-function parseDurationToClock(value) {
-  const match = String(value || '').match(/(\d+)m\s+(\d+)s/i);
-  if (!match) {
-    return '00:00';
-  }
-
-  const minutes = String(Number(match[1])).padStart(2, '0');
-  const seconds = String(Number(match[2])).padStart(2, '0');
-  return `${minutes}:${seconds}`;
-}
-
-function parseEmotionBreakdown(text) {
+function parseEmotionMap(text) {
   if (!text || !text.includes('AVERAGE EMOTION BREAKDOWN:')) {
-    return [];
+    return { happy:0.12, sad:0.05, angry:0.03, fear:0.02, surprise:0.04, disgust:0.01, neutral:0.73 }
   }
-
-  const sectionMatch = text.match(/AVERAGE EMOTION BREAKDOWN:\s*([\s\S]*?)^-{5,}/m);
-  const section = sectionMatch ? sectionMatch[1] : '';
-
-  return section
-    .split(/\r?\n/)
-    .map((line) => {
-      const match = line.match(/^\s*([A-Za-z_]+)\s+(\d+(?:\.\d+)?)%/);
-      if (!match) {
-        return null;
-      }
-
-      const emotion = match[1].toLowerCase();
-      const percentage = Number(match[2]);
-      return {
-        emotion,
-        percentage,
-        value: percentage / 100,
-      };
-    })
-    .filter(Boolean);
+  const sectionMatch = text.match(/AVERAGE EMOTION BREAKDOWN:\s*([\s\S]*?)^-{5,}/m)
+  const section = sectionMatch ? sectionMatch[1] : ''
+  const result = {}
+  for (const line of section.split(/\r?\n/)) {
+    const m = line.match(/^\s*([A-Za-z_]+)\s+(\d+(?:\.\d+)?)%/)
+    if (m) result[m[1].toLowerCase()] = Number(m[2]) / 100
+  }
+  if (Object.keys(result).length === 0)
+    return { happy:0.12, sad:0.05, angry:0.03, fear:0.02, surprise:0.04, disgust:0.01, neutral:0.73 }
+  return result
 }
 
-function parseReport(text) {
-  if (!text) {
-    return {
-      duration: '--',
-      durationClock: '00:00',
-      samples: '--',
-      avgBurnout: '--',
-      avgBurnoutValue: 0,
-      peakBurnout: '--',
-      peakBurnoutValue: 0,
-      status: 'No report selected',
-      heartRate: '--',
-      spo2: '--',
-      advice: '',
-      emotions: [],
-    };
-  }
-
-  const lines = text.split(/\r?\n/);
-  const statusLine = lines.find((item) => item.includes('STATUS:'));
-  const adviceMarker = 'AI WELLNESS ADVISOR RESPONSE:';
-  const adviceIndex = text.indexOf(adviceMarker);
-  const avgBurnout = extractLineValue(text, 'AVG BURNOUT SCORE :');
-  const peakBurnout = extractLineValue(text, 'PEAK BURNOUT      :');
-  const duration = extractLineValue(text, 'Duration      :');
-
-  return {
-    duration,
-    durationClock: parseDurationToClock(duration),
-    samples: extractLineValue(text, 'Samples       :'),
-    avgBurnout,
-    avgBurnoutValue: parseMetricNumber(avgBurnout) ?? 0,
-    peakBurnout,
-    peakBurnoutValue: parseMetricNumber(peakBurnout) ?? 0,
-    status: statusLine ? statusLine.split('STATUS:')[1].trim() : 'Report has no risk summary yet',
-    heartRate: extractLineValue(text, 'HEART RATE (BPM)  :'),
-    spo2: extractLineValue(text, 'BLOOD OXYGEN      :'),
-    advice: adviceIndex >= 0 ? text.slice(adviceIndex + adviceMarker.length).trim() : '',
-    emotions: parseEmotionBreakdown(text),
-  };
+function parseDurationSeconds(text) {
+  const d = extractLineValue(text, 'Duration      :')
+  const m = String(d).match(/(\d+)m\s+(\d+)s/i)
+  return m ? Number(m[1]) * 60 + Number(m[2]) : 0
 }
 
-function statusTone(status) {
-  const upper = String(status || '').toUpperCase();
-  if (upper.includes('CRITICAL')) {
-    return 'critical';
-  }
-  if (upper.includes('HIGH')) {
-    return 'high';
-  }
-  if (upper.includes('MODERATE')) {
-    return 'moderate';
-  }
-  if (upper.includes('LOW')) {
-    return 'low';
-  }
-  return 'neutral';
+function parseSamples(text) {
+  const v = extractLineValue(text, 'Samples       :')
+  return parseMetricNumber(v) ?? 0
 }
 
-function toneColor(tone) {
-  if (tone === 'critical') {
-    return '#ef4444';
-  }
-  if (tone === 'high' || tone === 'moderate') {
-    return '#f59e0b';
-  }
-  if (tone === 'low') {
-    return '#22c55e';
-  }
-  return '#94a3b8';
+function parseBias(text) {
+  const lines = (text || '').split(/\r?\n/)
+  const biasLine = lines.find(l => l.includes('Dominant Emotion :') || l.includes('DOMINANT EMOTION'))
+  if (!biasLine) return 'Awaiting session'
+  const parts = biasLine.split(':')
+  return parts.length > 1 ? parts[1].trim() : 'Awaiting session'
 }
 
-function createChatEntry(role, content, extras = {}) {
-  return {
-    id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    role,
-    content,
-    ...extras,
-  };
+function extractAdviceFromReport(text) {
+  if (!text) return ''
+  const marker = 'AI WELLNESS ADVISOR RESPONSE:'
+  const idx = text.indexOf(marker)
+  if (idx < 0) return ''
+  return text.slice(idx + marker.length).trim()
 }
 
-function appendHeartReading(current, metrics) {
-  if (!metrics || metrics.bpm == null) {
-    return current;
-  }
+const DEFAULT_EMOTIONS = { happy:0.12, sad:0.05, angry:0.03, fear:0.02, surprise:0.04, disgust:0.01, neutral:0.73 }
 
-  const entry = {
-    bpm: Number(metrics.bpm),
-    spo2: Number(metrics.spo2),
-    capturedAt: metrics.capturedAt || new Date().toISOString(),
-  };
+const DEFAULT_TTS = { available: true, enabled: true, state: 'ready', message: 'Frontend TTS ready', voice: 'af_heart' }
 
-  const last = current[current.length - 1];
-  if (last && last.capturedAt === entry.capturedAt) {
-    return current;
-  }
-
-  return [...current.slice(-59), entry];
-}
-
-function buildSparkline(values, width, height) {
-  if (!values.length) {
-    return { linePath: '', areaPath: '' };
-  }
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-  const range = Math.max(max - min, 1);
-  const step = values.length === 1 ? 0 : width / (values.length - 1);
-
-  const points = values.map((value, index) => {
-    const x = index * step;
-    const y = height - ((value - min) / range) * (height - 14) - 7;
-    return { x, y };
-  });
-
-  const linePath = points
-    .map((point, index) => `${index === 0 ? 'M' : 'L'} ${point.x.toFixed(2)} ${point.y.toFixed(2)}`)
-    .join(' ');
-
-  const areaPath = `${linePath} L ${points[points.length - 1].x.toFixed(2)} ${height} L 0 ${height} Z`;
-  return { linePath, areaPath };
-}
-
-function BurnoutGauge({ value, tone, label }) {
-  const safeValue = Math.max(0, Math.min(100, Number(value) || 0));
-  const style = {
-    '--gauge-angle': `${safeValue * 3.6}deg`,
-    '--gauge-color': toneColor(tone),
-  };
-
-  return (
-    <div className="gauge-shell">
-      <div className="gauge-ring" style={style}>
-        <div className="gauge-inner">
-          <div className="gauge-value" style={{ color: toneColor(tone) }}>
-            {Math.round(safeValue)}
-          </div>
-          <div className="gauge-label">Score</div>
-        </div>
-      </div>
-      <div className={`gauge-status tone-${tone}`}>{label}</div>
-      <div className="gauge-subtitle">Derived from the selected report</div>
-    </div>
-  );
-}
-
-function HeartChart({ values }) {
-  if (!values.length) {
-    return <div className="chart-empty">No heart readings captured yet.</div>;
-  }
-
-  const width = 620;
-  const height = 120;
-  const { linePath, areaPath } = buildSparkline(values, width, height);
-
-  return (
-    <svg className="hr-chart" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-      <defs>
-        <linearGradient id="heartGradient" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="rgba(239,68,68,0.35)" />
-          <stop offset="100%" stopColor="rgba(239,68,68,0.02)" />
-        </linearGradient>
-      </defs>
-      <path d={areaPath} fill="url(#heartGradient)" />
-      <path d={linePath} fill="none" stroke="#ef4444" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
-    </svg>
-  );
-}
+/* ── Main App ── */
 
 export default function App() {
-  const api = window.stressLensApi;
-  const [clock, setClock] = useState(() => new Date().toLocaleTimeString());
-  const [loading, setLoading] = useState(true);
-  const [models, setModels] = useState([]);
-  const [modelChoice, setModelChoice] = useState('1');
-  const [running, setRunning] = useState(false);
-  const [launchNote, setLaunchNote] = useState('');
-  const [reports, setReports] = useState([]);
-  const [activeReportName, setActiveReportName] = useState('');
-  const [activeReportContent, setActiveReportContent] = useState('');
-  const [heartMetrics, setHeartMetrics] = useState(null);
-  const [heartHistory, setHeartHistory] = useState([]);
-  const [heartSensorInfo, setHeartSensorInfo] = useState(null);
-  const [ttsInfo, setTtsInfo] = useState(DEFAULT_TTS);
-  const [chatMessages, setChatMessages] = useState([
-    createChatEntry(
-      'assistant',
-      'Hey there! I can chat about the latest report, and Python-side Kokoro TTS will read my replies when it is enabled.'
-    ),
-  ]);
-  const [chatInput, setChatInput] = useState('');
-  const [includeLatestReport, setIncludeLatestReport] = useState(true);
-  const [chatBusy, setChatBusy] = useState(false);
-  const [heartBusy, setHeartBusy] = useState(false);
-  const [lastLog, setLastLog] = useState('Waiting for bridge activity.');
+  const api = window.stressLensApi
 
-  const reportSummary = parseReport(activeReportContent);
-  const selectedModel = models.find((item) => item.choice === modelChoice);
-  const heartValue = heartMetrics?.bpm ?? parseMetricNumber(reportSummary.heartRate);
-  const spo2Value = heartMetrics?.spo2 ?? parseMetricNumber(reportSummary.spo2);
-  const chartValues = heartHistory.length ? heartHistory.map((item) => item.bpm) : heartValue ? [heartValue] : [];
-  const activeReportMeta = reports.find((item) => item.fileName === activeReportName);
-  const tone = statusTone(reportSummary.status);
-  const visibleReports = reports.slice(0, 10);
+  const [loading, setLoading]       = useState(true)
+  const [systemOk, setSystemOk]     = useState(false)
+  const [systemError, setSystemError] = useState('')
+  const [models, setModels]         = useState([])
+  const [selectedModel, setSelectedModel] = useState('1')
+  const [running, setRunning]       = useState(false)
+  const [ttsInfo, setTtsInfo]       = useState(DEFAULT_TTS)
+  const [aiOpen, setAiOpen]         = useState(false)
+  const [heartBusy, setHeartBusy]   = useState(false)
+  const [injectMessages, setInjectMessages] = useState([])
 
-  function appendSystemMessage(message) {
-    setChatMessages((current) => [...current.slice(-18), createChatEntry('system', message)]);
+  // Report-derived data
+  const [emotions, setEmotions]     = useState(DEFAULT_EMOTIONS)
+  const [burnout, setBurnout]       = useState(0)
+  const [samples, setSamples]       = useState(0)
+  const [elapsed, setElapsed]       = useState(0)
+  const [bias, setBias]             = useState('Awaiting session')
+  const [heartRate, setHeartRate]   = useState(null)
+  const [spo2, setSpo2]             = useState(null)
+  const [hrHistory, setHrHistory]   = useState([])
+
+  const elapsedRef = useRef(null)
+  const seenAdviceRef = useRef(new Set())
+
+  function applyReport(text) {
+    setEmotions(parseEmotionMap(text))
+    setBurnout(parseMetricNumber(extractLineValue(text, 'AVG BURNOUT SCORE :')) ?? 0)
+    setSamples(parseSamples(text))
+    setBias(parseBias(text))
+    const elSec = parseDurationSeconds(text)
+    if (elSec > 0) setElapsed(elSec)
+    const hr = parseMetricNumber(extractLineValue(text, 'HEART RATE (BPM)  :'))
+    const sp = parseMetricNumber(extractLineValue(text, 'BLOOD OXYGEN      :'))
+    if (hr != null) { setHeartRate(hr); addHr(hr) }
+    if (sp != null) setSpo2(sp)
   }
 
-  async function openReport(fileName) {
-    if (!api || !fileName) {
-      return;
-    }
-
-    try {
-      const payload = await api.readReport(fileName);
-      setActiveReportName(payload.fileName);
-      setActiveReportContent(payload.content || '');
-    } catch (error) {
-      setLastLog(`reports: Failed to read ${fileName}: ${error.message}`);
-    }
+  function addHr(bpm) {
+    if (bpm == null) return
+    setHrHistory(prev => {
+      const entry = { t: prev.length, bpm: Number(bpm) }
+      return [...prev.slice(-99), entry]
+    })
   }
 
   function applyBootstrap(payload) {
-    setModels(payload.models || []);
-    setModelChoice(payload.selectedModelChoice || '1');
-    setReports(payload.reports || []);
-    setRunning(Boolean(payload.mainRunning?.running));
-    setLaunchNote(payload.launchNote || 'Use Q, R, P, and S inside the camera window.');
-    setHeartSensorInfo(payload.heartSensor || null);
-    setTtsInfo(payload.tts || DEFAULT_TTS);
-    setLastLog(`bridge: Ready using ${payload.pythonExecutable}`);
+    setModels(payload.models || [])
+    setSelectedModel(payload.selectedModelChoice || '1')
+    setRunning(Boolean(payload.mainRunning?.running))
+    setTtsInfo(payload.tts || DEFAULT_TTS)
+    setSystemOk(true)
+    setSystemError('')
 
     if (payload.latestHeartMetrics) {
-      setHeartMetrics(payload.latestHeartMetrics);
-      setHeartHistory((current) => appendHeartReading(current, payload.latestHeartMetrics));
+      setHeartRate(payload.latestHeartMetrics.bpm)
+      setSpo2(payload.latestHeartMetrics.spo2)
+      addHr(payload.latestHeartMetrics.bpm)
     }
 
-    if (payload.latestReport) {
-      setActiveReportName(payload.latestReport.fileName);
-      setActiveReportContent(payload.latestReport.content || '');
-    } else if (payload.reports?.length) {
-      openReport(payload.reports[0].fileName);
+    if (payload.latestReport?.content) {
+      applyReport(payload.latestReport.content)
     }
   }
 
+  // Bootstrap
   useEffect(() => {
-    const intervalId = window.setInterval(() => {
-      setClock(new Date().toLocaleTimeString());
-    }, 1000);
+    // TTS priming no longer needed — backend handles speech
 
-    return () => window.clearInterval(intervalId);
-  }, []);
-
-  useEffect(() => {
-    let disposed = false;
-
-    async function hydrate() {
-      if (!api) {
-        setLoading(false);
-        return;
-      }
-
-      setLoading(true);
+    if (!api) { setLoading(false); return }
+    let disposed = false
+    ;(async () => {
       try {
-        const payload = await api.getBootstrap();
-        if (!disposed) {
-          applyBootstrap(payload);
-        }
-      } catch (error) {
-        if (!disposed) {
-          setLastLog(`bridge: Bootstrap failed: ${error.message}`);
-        }
+        const payload = await api.getBootstrap()
+        if (!disposed) applyBootstrap(payload)
+      } catch (e) {
+        if (!disposed) { setSystemOk(false); setSystemError(e.message || 'Bridge unreachable') }
       } finally {
-        if (!disposed) {
-          setLoading(false);
-        }
+        if (!disposed) setLoading(false)
       }
-    }
+    })()
 
-    hydrate();
+    const unsub = api.onBridgeEvent(ev => {
+      if (disposed) return
 
-    if (!api) {
-      return () => {
-        disposed = true;
-      };
-    }
-
-    const dispose = api.onBridgeEvent((payload) => {
-      if (disposed) {
-        return;
+      if (ev.event === 'main-status') {
+        setRunning(Boolean(ev.data?.running))
+        if (ev.data?.modelChoice) setSelectedModel(ev.data.modelChoice)
       }
 
-      if (payload.event === 'main-status') {
-        setRunning(Boolean(payload.data?.running));
-        if (payload.data?.modelChoice) {
-          setModelChoice(payload.data.modelChoice);
-        }
-        if (payload.data?.running) {
-          appendSystemMessage(`Camera monitor launched with ${payload.data.modelName}.`);
-        } else {
-          appendSystemMessage(
-            `Camera monitor stopped${payload.data?.exitCode !== undefined ? ` (exit ${payload.data.exitCode})` : ''}.`
-          );
-        }
+      if (ev.event === 'heart-rate' && ev.data) {
+        setHeartRate(ev.data.bpm)
+        setSpo2(ev.data.spo2)
+        addHr(ev.data.bpm)
       }
 
-      if (payload.event === 'heart-rate') {
-        setHeartMetrics(payload.data);
-        setHeartHistory((current) => appendHeartReading(current, payload.data));
-      }
+      if (ev.event === 'report-updated' && ev.data?.content) {
+        applyReport(ev.data.content)
 
-      if (payload.event === 'report-updated') {
-        setReports(payload.data?.reports || []);
-        if (payload.data?.fileName && payload.data?.content) {
-          setActiveReportName(payload.data.fileName);
-          setActiveReportContent(payload.data.content);
-          appendSystemMessage(`${payload.data.kind || 'updated'} ${payload.data.fileName}.`);
+        const advice = ev.data.aiAdvice || extractAdviceFromReport(ev.data.content)
+        if (advice) {
+          const key = `${ev.data.fileName || 'unknown'}:${advice}`
+          if (!seenAdviceRef.current.has(key)) {
+            seenAdviceRef.current.add(key)
+            const msg = { role:'ai', text: advice, ts: Date.now(), source:'report' }
+            setInjectMessages(p => [...p, msg])
+            setAiOpen(true)
+          }
         }
       }
 
-      if (payload.event === 'tts-status') {
-        setTtsInfo(payload.data || DEFAULT_TTS);
+      if (ev.event === 'tts-status') {
+        setTtsInfo(ev.data || DEFAULT_TTS)
       }
 
-      if (payload.event === 'log' && payload.data?.message) {
-        setLastLog(`${payload.data.source || 'log'}: ${payload.data.message}`);
+      if (ev.event === 'ai-advice' && ev.data?.advice) {
+        const key = `${ev.data.fileName || 'unknown'}:${ev.data.advice}`
+        if (!seenAdviceRef.current.has(key)) {
+          seenAdviceRef.current.add(key)
+          const msg = { role:'ai', text: ev.data.advice, ts: Date.now(), source:'report' }
+          setInjectMessages(p => [...p, msg])
+          setAiOpen(true)
+        }
       }
-    });
 
-    return () => {
-      disposed = true;
-      if (typeof dispose === 'function') {
-        dispose();
+      if (ev.event === 'log' && ev.data?.message) {
+        const lower = (ev.data.message || '').toLowerCase()
+        const src = ev.data.source || ''
+        if ((src === 'heart' || src.includes('main')) && /place your finger|hold still|listening on/.test(lower)) {
+          const msg = { role:'system', text: 'Place your finger on the heart sensor and hold still...', ts: Date.now() }
+          setInjectMessages(p => [...p, msg])
+          setAiOpen(true)
+        }
+        if ((src === 'heart' || src.includes('main')) && /heart sensor timed out|timeout/.test(lower)) {
+          const msg = { role:'system', text: 'Heart sensor timed out — no reading captured.', ts: Date.now() }
+          setInjectMessages(p => [...p, msg])
+        }
+        if (src.includes('main') && /sending to ai advisor/.test(lower)) {
+          const msg = { role:'system', text: 'Report sent to AI advisor — thinking...', ts: Date.now() }
+          setInjectMessages(p => [...p, msg])
+          setAiOpen(true)
+        }
       }
-    };
-  }, []);
+    })
+
+    return () => { disposed = true; if (typeof unsub === 'function') unsub() }
+  }, [])
+
+  // Elapsed timer when running
+  useEffect(() => {
+    if (!running) { if (elapsedRef.current) clearInterval(elapsedRef.current); return }
+    elapsedRef.current = setInterval(() => setElapsed(s => s + 1), 1000)
+    return () => clearInterval(elapsedRef.current)
+  }, [running])
 
   async function handleStart() {
-    if (!api) {
-      return;
-    }
-
+    if (!api) return
     try {
-      const payload = await api.startMonitoring(modelChoice);
-      setRunning(Boolean(payload.running));
-      appendSystemMessage(
-        payload.alreadyRunning
-          ? 'main.py was already running.'
-          : 'Camera window launched. Use R or S there to generate reports.'
-      );
-    } catch (error) {
-      appendSystemMessage(`Launch failed: ${error.message}`);
-    }
+      const p = await api.startMonitoring(selectedModel)
+      setRunning(Boolean(p.running))
+    } catch {}
   }
 
-  async function handleForceStop() {
-    if (!api) {
-      return;
-    }
-
-    try {
-      const payload = await api.stopMonitoring();
-      setRunning(false);
-      appendSystemMessage(payload.note || 'main.py was stopped.');
-    } catch (error) {
-      appendSystemMessage(`Stop failed: ${error.message}`);
-    }
+  async function handleStop() {
+    if (!api) return
+    try { await api.stopMonitoring(); setRunning(false) } catch {}
   }
 
   async function handleHeartCapture() {
-    if (!api) {
-      return;
-    }
-
-    setHeartBusy(true);
+    if (!api) return
+    setHeartBusy(true)
     try {
-      const payload = await api.captureHeartRate();
-      if (payload.metrics) {
-        setHeartMetrics(payload.metrics);
-        setHeartHistory((current) => appendHeartReading(current, payload.metrics));
+      const p = await api.captureHeartRate()
+      if (p.metrics) {
+        setHeartRate(p.metrics.bpm)
+        setSpo2(p.metrics.spo2)
+        addHr(p.metrics.bpm)
       }
-    } catch (error) {
-      appendSystemMessage(`Heart capture failed: ${error.message}`);
-    } finally {
-      setHeartBusy(false);
-    }
+    } catch {}
+    setHeartBusy(false)
   }
 
-  async function handleOpenReportFolder() {
-    if (!api) {
-      return;
-    }
-
+  async function handleTtsToggle() {
+    if (!api) return
     try {
-      await api.openReportFolder();
-    } catch (error) {
-      appendSystemMessage(`Could not open the report folder: ${error.message}`);
-    }
+      const p = await api.setTtsEnabled(!ttsInfo.enabled)
+      setTtsInfo(p || DEFAULT_TTS)
+    } catch {}
   }
 
-  async function handleRefreshReports() {
-    if (!api) {
-      return;
-    }
-
-    try {
-      const payload = await api.listReports();
-      setReports(payload.reports || []);
-      if (!activeReportName && payload.reports?.length) {
-        await openReport(payload.reports[0].fileName);
-      }
-    } catch (error) {
-      appendSystemMessage(`Refresh failed: ${error.message}`);
-    }
+  async function handleOpenReports() {
+    if (!api) return
+    try { await api.openReportFolder() } catch {}
   }
 
-  async function handleToggleTts() {
-    if (!api) {
-      return;
-    }
+  const modelName = models.find(m => m.choice === selectedModel)?.name || 'AI Model'
 
-    try {
-      const payload = await api.setTtsEnabled(!ttsInfo.enabled);
-      setTtsInfo(payload || DEFAULT_TTS);
-    } catch (error) {
-      appendSystemMessage(`Could not update Python TTS: ${error.message}`);
-    }
+  const dataForCards = {
+    heartRate, spo2, burnout, running, elapsed,
   }
 
-  async function handleChatSend() {
-    if (!api) {
-      return;
-    }
-
-    const trimmed = chatInput.trim();
-    if (!trimmed) {
-      return;
-    }
-
-    setChatMessages((current) => [...current.slice(-18), createChatEntry('user', trimmed)]);
-    setChatInput('');
-    setChatBusy(true);
-
-    try {
-      const payload = await api.sendChat(trimmed, includeLatestReport, modelChoice);
-      setChatMessages((current) => [
-        ...current.slice(-18),
-        createChatEntry('assistant', payload.response || 'No reply returned.', {
-          thinking: payload.thinking,
-          meta: payload.includedReport ? `${payload.model} with ${payload.includedReport}` : payload.model,
-        }),
-      ]);
-
-      if (payload.tts) {
-        setTtsInfo(payload.tts);
-      }
-    } catch (error) {
-      setChatMessages((current) => [
-        ...current.slice(-18),
-        createChatEntry('system', `Chat failed: ${error.message}`),
-      ]);
-    } finally {
-      setChatBusy(false);
-    }
-  }
-
-  function handleChatKeyDown(event) {
-    if (event.key === 'Enter' && !event.shiftKey) {
-      event.preventDefault();
-      handleChatSend();
-    }
-  }
-
-  if (!api) {
+  if (loading) {
     return (
-      <div className="missing-shell">
-        <div className="missing-card">
-          <h1>Open this renderer through Electron</h1>
-          <p>The preload bridge is missing in a plain browser tab, so the desktop controls are not available here.</p>
+      <div className="app" style={{display:'flex',alignItems:'center',justifyContent:'center'}}>
+        <div style={{textAlign:'center',color:'var(--text2)'}}>
+          <div style={{fontSize:'24px',marginBottom:'8px'}}>⟳</div>
+          Connecting to Python bridge…
         </div>
       </div>
-    );
+    )
   }
 
   return (
-    <div className="screen">
-      <header className="topbar">
-        <div className="topbar-brand">
-          <div className="logo">S</div>
-          <h1>
-            Stress<span>Lens</span> AI
-          </h1>
-        </div>
+    <>
+    <div className="app">
+      <TopBar
+        running={running}
+        systemOk={systemOk} systemError={systemError}
+        models={models} selectedModel={selectedModel}
+        onModelChange={setSelectedModel}
+        onStart={handleStart} onStop={handleStop}
+      />
 
-        <div className="topbar-controls">
-          <select className="topbar-select" value={modelChoice} onChange={(event) => setModelChoice(event.target.value)}>
-            {models.map((item) => (
-              <option key={item.choice} value={item.choice}>
-                {item.label}
-              </option>
-            ))}
-          </select>
-          <button className="topbar-btn start" onClick={handleStart} disabled={loading || running}>
-            {running ? 'Monitor Running' : 'Launch Monitor'}
-          </button>
-          <button className="topbar-btn" onClick={handleHeartCapture} disabled={heartBusy}>
-            {heartBusy ? 'Capturing...' : 'Measure Heart'}
-          </button>
-          <button className="topbar-btn stop" onClick={handleForceStop} disabled={!running}>
-            Force Stop
-          </button>
-          <button className="topbar-btn" onClick={handleOpenReportFolder}>
-            Open Reports
-          </button>
-        </div>
-
-        <div className="topbar-status">
-          <div className="status-pill">
-            <span className={`status-dot ${running ? 'on' : 'off'}`} />
-            <span>{running ? 'Monitoring' : 'Idle'}</span>
+      <div className="body">
+        <div className="content">
+          <div className="row-top">
+            <VideoPanel running={running} elapsed={elapsed} />
+            <BurnoutGauge burnout={burnout} running={running} />
+            <EmotionPanel emotions={emotions} samples={samples} bias={bias} />
           </div>
-          <span className="clock">{clock}</span>
-        </div>
-      </header>
-
-      <div className="main">
-        <div className="dashboard">
-          <section className="card">
-            <div className="card-header">
-              <span className="card-title">Burnout Risk</span>
-              <span className="card-badge">Report-derived</span>
-            </div>
-            <BurnoutGauge value={reportSummary.avgBurnoutValue} tone={tone} label={tone.toUpperCase()} />
-          </section>
-
-          <section className="card">
-            <div className="card-header">
-              <span className="card-title">Emotion Breakdown</span>
-              <span className="card-badge">DeepFace</span>
-            </div>
-            <div>
-              {reportSummary.emotions.length === 0 ? (
-                <div className="empty-copy">Use R or S in the camera window to populate the report-driven emotion bars.</div>
-              ) : (
-                reportSummary.emotions.map((item) => (
-                  <div key={item.emotion} className="emotion-row">
-                    <span className="emotion-label">{item.emotion}</span>
-                    <div className="emotion-bar-bg">
-                      <div
-                        className="emotion-bar-fill"
-                        style={{
-                          width: `${item.percentage}%`,
-                          background: EMOTION_COLORS[item.emotion] || '#64748b',
-                        }}
-                      />
-                    </div>
-                    <span className="emotion-pct">{Math.round(item.percentage)}%</span>
-                  </div>
-                ))
-              )}
-            </div>
-          </section>
-
-          <div className="metrics-row">
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: '#ef4444' }}>{heartValue ?? '--'}</div>
-              <div className="metric-name">Heart Rate</div>
-              <div className="metric-trend">{heartMetrics ? 'Live capture' : heartSensorInfo?.available ? 'Report fallback' : 'No sensor'}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: '#3b82f6' }}>{spo2Value ?? '--'}</div>
-              <div className="metric-name">SpO2 %</div>
-              <div className="metric-trend">{heartSensorInfo?.available ? `${heartSensorInfo.port} @ ${heartSensorInfo.baud}` : 'No sensor configured'}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: toneColor(tone) }}>{reportSummary.avgBurnout}</div>
-              <div className="metric-name">Average Burnout</div>
-              <div className="metric-trend">Peak {reportSummary.peakBurnout}</div>
-            </div>
-            <div className="metric-card">
-              <div className="metric-value" style={{ color: '#14b8a6' }}>{reportSummary.durationClock}</div>
-              <div className="metric-name">Session</div>
-              <div className="metric-trend">{reportSummary.samples} samples</div>
-            </div>
-          </div>
-
-          <section className="card">
-            <div className="card-header">
-              <span className="card-title">Heart Rate History</span>
-              <span className="card-badge badge-red">BPM</span>
-            </div>
-            <div className="chart-value">
-              <span>{heartValue ?? '--'}</span>
-              <span className="chart-unit">bpm</span>
-            </div>
-            <HeartChart values={chartValues} />
-          </section>
-
-          <section className="card">
-            <div className="card-header">
-              <span className="card-title">Session Info</span>
-              <span className="card-badge">{selectedModel?.model || 'No model'}</span>
-            </div>
-            <div className="info-grid">
-              <div className="info-row">
-                <span className="info-label">Model</span>
-                <span className="info-value">{selectedModel?.description || 'No model selected'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Status</span>
-                <span className="info-value">{running ? 'Camera window active' : 'Desktop idle'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Latest report</span>
-                <span className="info-value">{activeReportName || 'No report selected'}</span>
-              </div>
-              <div className="info-row">
-                <span className="info-label">Python TTS</span>
-                <span className="info-value">{ttsInfo.message}</span>
-              </div>
-            </div>
-            <p className="info-note">{launchNote}</p>
-            <p className="info-note info-log">{lastLog}</p>
-          </section>
-
-          <section className="card report-card">
-            <div className="card-header">
-              <span className="card-title">Latest Report</span>
-              <div className="report-toolbar">
-                <span className="card-badge">{activeReportMeta ? timestampLabel(activeReportMeta.modifiedAt) : '--'}</span>
-                <button className="inline-btn" onClick={handleRefreshReports}>Refresh</button>
-              </div>
-            </div>
-
-            <div className="report-tabs">
-              {visibleReports.length === 0 ? (
-                <span className="empty-copy">No report files yet.</span>
-              ) : (
-                visibleReports.map((item) => (
-                  <button
-                    key={item.fileName}
-                    className={`report-tab ${item.fileName === activeReportName ? 'active' : ''}`}
-                    onClick={() => openReport(item.fileName)}
-                  >
-                    {item.fileName}
-                  </button>
-                ))
-              )}
-            </div>
-
-            <pre className="report-content">{activeReportContent || 'Press R in the camera window to generate a report.'}</pre>
-          </section>
-
-          <div className="key-legend">
-            <span>Camera Window Keys:</span>
-            <span className="key-pill"><kbd>Q</kbd> Quit</span>
-            <span className="key-pill"><kbd>R</kbd> Report</span>
-            <span className="key-pill"><kbd>P</kbd> Privacy</span>
-            <span className="key-pill"><kbd>S</kbd> AI Support</span>
-            <span className="key-pill"><kbd>H</kbd> Heart Rate</span>
+          <div className="row-bottom">
+            <MetricCards data={dataForCards} />
+            <HeartRateChart history={hrHistory} running={running} />
           </div>
         </div>
 
-        <aside className="sidebar">
-          <div className="sidebar-header">
-            <h2>
-              <span className="ai-dot" /> AI Wellness Advisor
-            </h2>
-            <p>Powered by local Ollama with Python-side Kokoro TTS</p>
-          </div>
-
-          <div className="chat-messages">
-            {reportSummary.advice ? (
-              <article className="chat-msg msg-ai latest-advice">
-                <div className="msg-sender">Latest Advice</div>
-                {reportSummary.advice}
-              </article>
-            ) : null}
-
-            {chatMessages.map((message) => (
-              <article key={message.id} className={`chat-msg msg-${message.role}`}>
-                {message.role === 'assistant' ? <div className="msg-sender">StressLens AI</div> : null}
-                {message.meta ? <div className="msg-meta">{message.meta}</div> : null}
-                {message.thinking ? <div className="msg-thinking">Thinking: {message.thinking}</div> : null}
-                <div>{message.content}</div>
-              </article>
-            ))}
-          </div>
-
-          <div className="tts-bar">
-            <span>{ttsInfo.message}</span>
-            <button className="mute-toggle" onClick={handleToggleTts} disabled={!ttsInfo.available}>
-              {ttsInfo.enabled ? 'Unmuted' : 'Muted'}
-            </button>
-          </div>
-
-          <div className="chat-input">
-            <label className="chat-checkbox">
-              <input
-                type="checkbox"
-                checked={includeLatestReport}
-                onChange={(event) => setIncludeLatestReport(event.target.checked)}
-              />
-              Include latest report in context
-            </label>
-
-            <div className="chat-input-row">
-              <input
-                type="text"
-                value={chatInput}
-                onChange={(event) => setChatInput(event.target.value)}
-                onKeyDown={handleChatKeyDown}
-                placeholder="Ask for wellness advice..."
-              />
-              <button onClick={handleChatSend} disabled={chatBusy}>
-                {chatBusy ? 'Sending...' : 'Send'}
-              </button>
-            </div>
-          </div>
-        </aside>
+        <AIChat
+          open={aiOpen} onClose={() => setAiOpen(false)}
+          api={api} modelName={modelName}
+          ttsInfo={ttsInfo} onTtsToggle={handleTtsToggle}
+          onHeartCapture={handleHeartCapture} heartBusy={heartBusy}
+          injectMessages={injectMessages}
+        />
       </div>
+
+      <BottomBar
+        running={running} samples={samples} elapsed={elapsed}
+        aiOpen={aiOpen} onToggleAI={() => setAiOpen(o=>!o)}
+        onStart={handleStart} onStop={handleStop}
+        onHeartCapture={handleHeartCapture} heartBusy={heartBusy}
+        onOpenReports={handleOpenReports}
+      />
     </div>
-  );
+
+    {burnout >= 85 && (
+      <div style={{
+        position:'fixed', inset:0, zIndex:999, pointerEvents:'none',
+        background:'rgba(200,138,122,0.05)',
+        boxShadow:'inset 0 0 80px rgba(200,138,122,0.15)',
+        animation:'burnout-pulse 3s ease-in-out infinite',
+      }}/>
+    )}
+    {burnout >= 85 && (
+      <div style={{
+        position:'fixed', top:'50%', left:'50%', transform:'translate(-50%,-50%)',
+        zIndex:1000, pointerEvents:'none',
+        background:'rgba(26,25,21,0.95)',
+        border:'0.5px solid rgba(200,138,122,0.4)',
+        borderRadius:'16px', padding:'32px 44px', textAlign:'center',
+        boxShadow:'0 8px 40px rgba(0,0,0,0.4)',
+      }}>
+        <div style={{fontFamily:'var(--font-heading)', fontSize:'20px', fontWeight:700, color:'var(--stress-high)', marginBottom:'10px'}}>
+          Needs attention
+        </div>
+        <div style={{fontFamily:'var(--font-body)', fontSize:'14px', color:'var(--text-secondary)', lineHeight:1.6}}>
+          Your burnout score is <strong style={{color:'var(--stress-high)'}}>{Math.round(burnout)}</strong>.<br/>
+          You might want to take a break.<br/>
+          <em style={{color:'var(--text-tertiary)'}}>Step away from the screen and rest.</em>
+        </div>
+      </div>
+    )}
+    </>
+  )
 }

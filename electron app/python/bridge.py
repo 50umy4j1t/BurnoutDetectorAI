@@ -13,10 +13,7 @@ from pathlib import Path
 from types import MethodType
 from typing import Any
 
-try:
-    import numpy as np
-except Exception:
-    np = None
+import numpy as np
 
 try:
     import serial
@@ -30,24 +27,19 @@ except Exception:
 
 try:
     import sounddevice as sd
-except Exception:
-    sd = None
-
-try:
+    from kokoro_onnx import Kokoro, SAMPLE_RATE
     from huggingface_hub import hf_hub_download
 except Exception:
-    hf_hub_download = None
-
-try:
-    from kokoro_onnx import Kokoro
-except Exception:
+    sd = None
     Kokoro = None
+    SAMPLE_RATE = 24000
+    hf_hub_download = None
 
 
 SCRIPT_ROOT = Path(__file__).resolve().parent
 APP_ROOT = SCRIPT_ROOT.parent
 REPO_ROOT = APP_ROOT.parent
-MAIN_FILE = REPO_ROOT / "main.py"
+MAIN_FILE = SCRIPT_ROOT / "main_clone.py"
 PYTHON_FROM_VENV = REPO_ROOT / ".venv" / "Scripts" / "python.exe"
 REPORT_PATTERN = "report_*.txt"
 ANSI_PATTERN = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")
@@ -62,17 +54,19 @@ HEART_SENSOR_BAUD = int(os.getenv("HEART_SENSOR_BAUD", "9600"))
 HEART_SENSOR_SERIAL_TIMEOUT = float(os.getenv("HEART_SENSOR_SERIAL_TIMEOUT", "1.0"))
 HEART_SENSOR_WARMUP_SECONDS = float(os.getenv("HEART_SENSOR_WARMUP_SECONDS", "2.0"))
 HEART_SENSOR_MAX_WAIT_SECONDS = float(os.getenv("HEART_SENSOR_MAX_WAIT_SECONDS", "60.0"))
+FRONTEND_TTS_VOICE = os.getenv("STRESSLENS_TTS_VOICE", "af_heart")
 
+# Kokoro TTS config (same as main.py)
+TTS_PIPELINE: Any = None
+TTS_LOCK = threading.Lock()
 KOKORO_REPO_ID = "onnx-community/Kokoro-82M-v1.0-ONNX"
 KOKORO_MODEL_FILE = "onnx/model.onnx"
 KOKORO_VOICE_ID = "af_heart"
 KOKORO_VOICE_RAW_FILE = f"voices/{KOKORO_VOICE_ID}.bin"
 KOKORO_VOICE_BUNDLE = f"voices-{KOKORO_VOICE_ID}-v1.0.npz"
-TTS_TEXT_LIMIT = int(os.getenv("STRESSLENS_TTS_TEXT_LIMIT", "500"))
 
 STDOUT_LOCK = threading.Lock()
 STATE_LOCK = threading.Lock()
-TTS_LOCK = threading.Lock()
 STOP_EVENT = threading.Event()
 
 MODEL_CATALOG: dict[str, tuple[str, str]] = {}
@@ -80,7 +74,6 @@ SELECTED_MODEL_CHOICE = "1"
 MAIN_PROCESS: subprocess.Popen[str] | None = None
 KNOWN_REPORTS: dict[str, int] = {}
 LAST_HEART_METRICS: dict[str, Any] | None = None
-TTS_PIPELINE: Any | None = None
 TTS_ENABLED = os.getenv("STRESSLENS_TTS_ENABLED", "1").strip() != "0"
 TTS_STATE = ""
 TTS_MESSAGE = ""
@@ -136,48 +129,28 @@ def python_subprocess_env() -> dict[str, str]:
     return env
 
 
-def tts_missing_dependencies() -> list[str]:
-    missing: list[str] = []
-    if np is None:
-        missing.append("numpy")
-    if sd is None:
-        missing.append("sounddevice")
-    if hf_hub_download is None:
-        missing.append("huggingface_hub")
-    if Kokoro is None:
-        missing.append("kokoro_onnx")
-    return missing
-
-
-def tts_available() -> bool:
-    return len(tts_missing_dependencies()) == 0
-
-
 def current_tts_payload() -> dict[str, Any]:
-    available = tts_available()
+    available = True
     state = TTS_STATE
     message = TTS_MESSAGE.strip()
 
-    if not available:
-        state = "unavailable"
-        message = f"Python TTS unavailable: missing {', '.join(tts_missing_dependencies())}"
-    elif not TTS_ENABLED and state not in {"loading", "speaking"}:
+    if not TTS_ENABLED and state not in {"loading", "speaking"}:
         state = "muted"
         if not message:
-            message = "Python TTS muted"
+            message = "Frontend TTS muted"
     elif not state:
         state = "ready"
         if not message:
-            message = "Python TTS ready on first use"
+            message = "Frontend TTS ready"
     elif not message and state == "ready":
-        message = "Python TTS ready"
+        message = "Frontend TTS ready"
 
     return {
         "available": available,
         "enabled": TTS_ENABLED,
         "state": state,
         "message": message,
-        "voice": KOKORO_VOICE_ID,
+        "voice": FRONTEND_TTS_VOICE,
     }
 
 
@@ -194,14 +167,29 @@ def emit_tts_status(state: str | None = None, message: str | None = None) -> dic
     return payload
 
 
+def set_tts_enabled(enabled: Any) -> dict[str, Any]:
+    global TTS_ENABLED
+
+    TTS_ENABLED = bool(enabled)
+    if TTS_ENABLED:
+        payload = emit_tts_status("ready", "Frontend TTS enabled")
+        emit_log("tts", "Frontend TTS enabled")
+        return payload
+
+    payload = emit_tts_status("muted", "Frontend TTS muted")
+    emit_log("tts", "Frontend TTS muted")
+    return payload
+
+
 def prepare_kokoro_assets() -> tuple[str, str]:
-    if np is None or hf_hub_download is None:
-        raise RuntimeError("Kokoro dependencies are not available")
+    """Download assets and convert raw HF voice data to kokoro_onnx voice bundle format."""
+    if hf_hub_download is None:
+        raise RuntimeError("huggingface_hub is not installed")
 
     model_path = hf_hub_download(KOKORO_REPO_ID, KOKORO_MODEL_FILE)
     raw_voice_path = hf_hub_download(KOKORO_REPO_ID, KOKORO_VOICE_RAW_FILE)
 
-    cache_dir = SCRIPT_ROOT / ".cache" / "kokoro"
+    cache_dir = Path(__file__).resolve().parent / ".cache" / "kokoro"
     cache_dir.mkdir(parents=True, exist_ok=True)
     voices_bundle_path = cache_dir / KOKORO_VOICE_BUNDLE
 
@@ -214,7 +202,7 @@ def prepare_kokoro_assets() -> tuple[str, str]:
             rebuild_bundle = True
 
     if rebuild_bundle:
-        emit_log("tts", "Preparing Kokoro voice bundle")
+        emit_log("tts", "Preparing Kokoro voice bundle...")
         voice_data = np.fromfile(raw_voice_path, dtype=np.float32)
         if voice_data.size % 256 != 0:
             raise ValueError(
@@ -227,9 +215,7 @@ def prepare_kokoro_assets() -> tuple[str, str]:
 
 
 def apply_kokoro_runtime_compat(pipeline: Any) -> None:
-    if np is None:
-        return
-
+    """Patch kokoro_onnx runtime handling for onnx-community v1.0 model inputs."""
     input_names = [item.name for item in pipeline.sess.get_inputs()]
     if "input_ids" not in input_names:
         return
@@ -237,7 +223,7 @@ def apply_kokoro_runtime_compat(pipeline: Any) -> None:
     speed_input = next((item for item in pipeline.sess.get_inputs() if item.name == "speed"), None)
     speed_dtype = np.float32 if (speed_input and "float" in speed_input.type) else np.int32
 
-    def _create_audio_compat(self: Any, phonemes: str, voice: Any, speed: float) -> tuple[Any, int]:
+    def _create_audio_compat(self: Any, phonemes: str, voice: Any, speed: float) -> tuple:
         phonemes = phonemes[:510]
         tokens = np.array(self.tokenizer.tokenize(phonemes), dtype=np.int64)
         if len(tokens) > 510:
@@ -251,105 +237,60 @@ def apply_kokoro_runtime_compat(pipeline: Any) -> None:
             "speed": np.array([speed], dtype=speed_dtype),
         }
         audio = self.sess.run(None, inputs)[0]
-        return np.asarray(audio, dtype=np.float32).reshape(-1), 24000
+        return np.asarray(audio, dtype=np.float32).reshape(-1), SAMPLE_RATE
 
     pipeline._create_audio = MethodType(_create_audio_compat, pipeline)
 
 
-def ensure_tts_pipeline() -> None:
+def speak_text(text: str) -> dict[str, Any]:
+    """Generate speech with Kokoro TTS and play via sounddevice. Runs synchronously."""
     global TTS_PIPELINE
 
-    if TTS_PIPELINE is not None:
-        return
+    if sd is None or Kokoro is None:
+        emit_log("tts", "TTS unavailable: sounddevice or kokoro_onnx not installed")
+        emit_tts_status("error", "TTS packages not installed")
+        return {"spoken": False, "error": "sounddevice or kokoro_onnx not installed"}
 
-    emit_tts_status("loading", "Loading Kokoro TTS in Python...")
-    emit_log("tts", "Loading Kokoro TTS model")
-    model_path, voices_path = prepare_kokoro_assets()
-    TTS_PIPELINE = Kokoro(model_path, voices_path)
-    apply_kokoro_runtime_compat(TTS_PIPELINE)
-    emit_tts_status("ready", "Python TTS ready")
+    cleaned = str(text or "").strip()
+    if not cleaned:
+        return {"spoken": False, "error": "Empty text"}
 
+    # Truncate very long text
+    if len(cleaned) > 900:
+        cleaned = cleaned[:900]
 
-def speak_text(text: str, reason: str) -> bool:
-    cleaned_text = str(text or "").strip()
-    if not cleaned_text:
-        return False
+    with TTS_LOCK:
+        try:
+            if TTS_PIPELINE is None:
+                emit_tts_status("loading", "Loading Kokoro TTS model...")
+                emit_log("tts", "Loading Kokoro TTS model...")
+                model_path, voices_path = prepare_kokoro_assets()
+                TTS_PIPELINE = Kokoro(model_path, voices_path)
+                apply_kokoro_runtime_compat(TTS_PIPELINE)
+                emit_log("tts", "Kokoro TTS model loaded")
 
-    if not TTS_ENABLED:
-        emit_tts_status("muted", "Python TTS muted")
-        return False
-
-    if not tts_available():
-        payload = emit_tts_status("unavailable", current_tts_payload()["message"])
-        emit_log("tts", payload["message"])
-        return False
-
-    if np is None or sd is None:
-        payload = emit_tts_status("unavailable", current_tts_payload()["message"])
-        emit_log("tts", payload["message"])
-        return False
-
-    try:
-        with TTS_LOCK:
-            ensure_tts_pipeline()
-            emit_tts_status("speaking", f"Speaking {reason} in Python...")
-            samples, sample_rate = TTS_PIPELINE.create(
-                cleaned_text[:TTS_TEXT_LIMIT],
-                voice=KOKORO_VOICE_ID,
-                speed=1.1,
-            )
+            emit_tts_status("generating", "Generating speech...")
+            samples, sr = TTS_PIPELINE.create(cleaned, voice=KOKORO_VOICE_ID, speed=1.1)
             samples = np.asarray(samples, dtype=np.float32).reshape(-1)
-            sd.play(samples, samplerate=sample_rate)
+
+            duration = len(samples) / sr
+            emit_tts_status("speaking", f"Speaking ({duration:.0f}s)...")
+            emit_log("tts", f"Playing audio: {duration:.1f}s")
+            sd.play(samples, samplerate=sr)
             sd.wait()
-            emit_tts_status("ready", "Python TTS ready")
-            emit_log("tts", f"Finished speaking {reason}")
-            return True
-    except Exception as exc:
-        emit_tts_status("error", f"Python TTS error: {exc}")
-        emit_log("tts", f"TTS error: {exc}")
-        return False
+
+            emit_tts_status("ready", "TTS ready")
+            return {"spoken": True, "duration": round(duration, 1)}
+
+        except Exception as exc:
+            emit_log("tts", f"TTS error: {exc}")
+            emit_tts_status("error", f"TTS error: {exc}")
+            return {"spoken": False, "error": str(exc)}
 
 
-def queue_tts(text: str, reason: str) -> bool:
-    cleaned_text = str(text or "").strip()
-    if not cleaned_text:
-        return False
-
-    if not TTS_ENABLED:
-        emit_tts_status("muted", "Python TTS muted")
-        return False
-
-    if not tts_available():
-        payload = emit_tts_status("unavailable", current_tts_payload()["message"])
-        emit_log("tts", payload["message"])
-        return False
-
-    emit_tts_status("loading", f"Queued Python TTS for {reason}")
-    emit_log("tts", f"Queued Python TTS for {reason}")
-    threading.Thread(target=speak_text, args=(cleaned_text, reason), daemon=True).start()
-    return True
-
-
-def set_tts_enabled(enabled: Any) -> dict[str, Any]:
-    global TTS_ENABLED
-
-    TTS_ENABLED = bool(enabled)
-    if not tts_available():
-        payload = emit_tts_status("unavailable", current_tts_payload()["message"])
-        emit_log("tts", payload["message"])
-        return payload
-
-    if TTS_ENABLED:
-        payload = emit_tts_status(
-            "ready",
-            "Python TTS ready on first use" if TTS_PIPELINE is None else "Python TTS ready",
-        )
-        emit_log("tts", "Python TTS enabled")
-        return payload
-
-    payload = emit_tts_status("muted", "Python TTS muted")
-    emit_log("tts", "Python TTS muted")
-    return payload
+def speak_text_async(text: str) -> None:
+    """Fire-and-forget TTS in a background thread."""
+    threading.Thread(target=speak_text, args=(text,), daemon=True).start()
 
 
 def load_model_catalog() -> tuple[dict[str, tuple[str, str]], str]:
@@ -558,7 +499,7 @@ def wait_for_main_exit(process: subprocess.Popen[str]) -> None:
             "modelName": MODEL_CATALOG.get(SELECTED_MODEL_CHOICE, ("", ""))[0],
         },
     )
-    emit_log("main", f"main.py exited with code {exit_code}")
+    emit_log("main", f"main_clone.py exited with code {exit_code}")
 
 
 def launch_main_process(model_choice: str) -> dict[str, Any]:
@@ -617,7 +558,7 @@ def launch_main_process(model_choice: str) -> dict[str, Any]:
             "modelName": model_name,
         },
     )
-    emit_log("main", f"Launched main.py with model choice {SELECTED_MODEL_CHOICE} ({model_name})")
+    emit_log("main", f"Launched main_clone.py with model choice {SELECTED_MODEL_CHOICE} ({model_name})")
 
     return {
         "running": True,
@@ -634,7 +575,7 @@ def terminate_main_process() -> dict[str, Any]:
         process = MAIN_PROCESS
 
     if not process or process.poll() is not None:
-        return {"running": False, "note": "main.py is not running"}
+        return {"running": False, "note": "main_clone.py is not running"}
 
     process.terminate()
     try:
@@ -649,7 +590,7 @@ def terminate_main_process() -> dict[str, Any]:
 
     return {
         "running": False,
-        "note": "main.py was force-stopped. Use Q inside the camera window for a clean final report.",
+        "note": "main_clone.py was force-stopped. Use Q inside the camera window for a clean final report.",
     }
 
 
@@ -740,7 +681,11 @@ def chat_with_ollama(message: str, include_latest_report: bool, model_choice: st
     if reasoning_text is None and isinstance(message_block, dict):
         reasoning_text = message_block.get("thinking")
 
-    tts_queued = queue_tts(reply_text or "", f"chat reply from {model_name}")
+    # Queue TTS for the reply (non-blocking, happens after response is sent to frontend)
+    tts_queued = False
+    if TTS_ENABLED and reply_text:
+        speak_text_async(reply_text)
+        tts_queued = True
 
     return {
         "response": reply_text or "",
@@ -756,6 +701,7 @@ def watch_reports() -> None:
     global KNOWN_REPORTS
 
     KNOWN_REPORTS, _ = collect_reports()
+    advice_emitted_for: set[str] = set()
 
     while not STOP_EVENT.wait(1.5):
         snapshot, reports = collect_reports()
@@ -775,10 +721,32 @@ def watch_reports() -> None:
             "fileName": latest_file_name,
             "reports": reports,
         }
+        advice_text = ""
         if latest_file_name:
-            payload["content"] = read_report_text(latest_file_name)
+            content_text = read_report_text(latest_file_name)
+            payload["content"] = content_text
+
+            advice_marker = "AI WELLNESS ADVISOR RESPONSE:"
+            advice_idx = content_text.find(advice_marker)
+            if advice_idx >= 0:
+                advice_text = content_text[advice_idx + len(advice_marker):].strip()
+                if advice_text:
+                    payload["aiAdvice"] = advice_text
 
         emit_event("report-updated", payload)
+
+        if latest_file_name and advice_text and latest_file_name not in advice_emitted_for:
+            advice_emitted_for.add(latest_file_name)
+            emit_log("bridge", f"Detected AI advice in {latest_file_name}")
+            # Emit to frontend FIRST so the chat shows immediately
+            emit_event("ai-advice", {
+                "advice": advice_text,
+                "fileName": latest_file_name,
+                "kind": change_kind,
+            })
+            # THEN speak via backend TTS (non-blocking)
+            if TTS_ENABLED:
+                speak_text_async(advice_text)
 
 
 def handle_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -805,6 +773,12 @@ def handle_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
         if not file_name:
             raise ValueError("fileName is required")
         return read_report_payload(file_name)
+    if method == "speak_text":
+        text = str(params.get("text") or "").strip()
+        if not text:
+            raise ValueError("text is required")
+        # Run TTS synchronously so the caller gets the result
+        return speak_text(text)
     if method == "shutdown":
         STOP_EVENT.set()
         return {"ok": True}

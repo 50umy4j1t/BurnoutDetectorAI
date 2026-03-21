@@ -11,8 +11,11 @@
     "start": "electron ."
   },
   "dependencies": {
+    "kokoro-js": "^1.2.1",
+    "lucide-react": "^0.577.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "recharts": "^3.8.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.0",
